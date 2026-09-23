@@ -24,4 +24,6 @@ npm run demo:devnet
 
 `demo:devnet` builds and deploys the program, creates separate authority, buyer, and seller wallets, and exercises cancellation, a matched partial fill, a no-cross refund, and the 32-order/101-tick maximum. Wallet keyfiles and the public proof manifest are stored under the ignored `target/devnet/` directory. The script requests devnet SOL from the public faucet as needed.
 
+On a fresh checkout, `build:program` creates the ignored program keypair and synchronizes the Rust and Anchor program IDs before compiling. The runner checks that all three IDs still match before it contacts devnet.
+
 Devnet transactions use only DEMO-EQUITY and DEMO-USD. They do not involve the KALSHI mint. A route quote is indicative and does not establish fillability, eligibility, execution, or auction benefit.

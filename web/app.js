@@ -674,6 +674,7 @@ async function submitAndFinalize(instructions, label) {
   const originalLabel = button.textContent;
   button.disabled = true;
   button.textContent = "Review in wallet…";
+  let finalized = false;
   try {
     const latest = await connection.getLatestBlockhash("finalized");
     const transaction = new Transaction({
@@ -690,13 +691,14 @@ async function submitAndFinalize(instructions, label) {
       lastValidBlockHeight: latest.lastValidBlockHeight,
     }, "finalized");
     if (confirmation.value.err) throw new Error("The transaction finalized with an on-chain error.");
+    finalized = true;
     rememberTransaction(label, signature);
     renderProof();
-    await loadAuction();
   } finally {
     state.busy = false;
     button.textContent = originalLabel;
     renderAuction();
+    if (finalized) await loadAuction();
   }
 }
 

@@ -27,7 +27,6 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const DEVNET = "https://api.devnet.solana.com";
 const PROGRAM_ID_PATH = path.join(ROOT, "target/deploy/callwindow_escrow-keypair.json");
 const DEPLOY_PATH = path.join(ROOT, "target/deploy/callwindow_escrow.so");
-const KEYGEN_BIN = path.join(ROOT, ".tools/solana/active_release/bin/solana-keygen");
 const KEY_DIR = path.join(ROOT, "target/devnet");
 const PROGRAM_BIN = path.join(ROOT, ".tools/solana/active_release/bin/solana");
 const MAX_ORDERS = 32;
@@ -86,17 +85,24 @@ function executeDeploy(authorityPath, programIdPath) {
   ], { cwd: ROOT, stdio: "inherit" });
 }
 
-async function ensureProgramKeypair() {
-  await mkdir(path.dirname(PROGRAM_ID_PATH), { recursive: true, mode: 0o700 });
+async function loadProgramKeypair() {
+  let keypairContents;
   try {
-    await readFile(PROGRAM_ID_PATH, "utf8");
+    keypairContents = await readFile(PROGRAM_ID_PATH, "utf8");
   } catch (error) {
-    if (error?.code !== "ENOENT") throw error;
-    execFileSync(KEYGEN_BIN, ["new", "--no-bip39-passphrase", "--silent", "--outfile", PROGRAM_ID_PATH], {
-      cwd: ROOT,
-      stdio: "ignore",
-    });
+    if (error?.code === "ENOENT") throw new Error("Program keypair is missing. Run `npm run build:program` before the devnet demo.");
+    throw error;
   }
+  const keypair = Keypair.fromSecretKey(Uint8Array.from(JSON.parse(keypairContents)));
+  const programSource = await readFile(path.join(ROOT, "programs/callwindow-escrow/src/lib.rs"), "utf8");
+  const anchorConfig = await readFile(path.join(ROOT, "Anchor.toml"), "utf8");
+  const declaredId = programSource.match(/^declare_id!\("([1-9A-HJ-NP-Za-km-z]+)"\);$/m)?.[1];
+  const configuredIds = [...anchorConfig.matchAll(/^callwindow_escrow = "([1-9A-HJ-NP-Za-km-z]+)"$/gm)].map((match) => match[1]);
+  invariant(declaredId === keypair.publicKey.toBase58()
+    && configuredIds.length === 2
+    && configuredIds.every((id) => id === keypair.publicKey.toBase58()),
+  "The generated program ID, Rust declaration, and Anchor.toml do not match. Run `npm run build:program` to synchronize and rebuild.");
+  return keypair;
 }
 
 function u8(value) {
@@ -151,10 +157,15 @@ async function sendFinalized(payer, instructionList, signers = [payer]) {
     preflightCommitment: "confirmed",
     maxRetries: 5,
   });
-  const transaction = await connection.getTransaction(signature, {
-    commitment: "finalized",
-    maxSupportedTransactionVersion: 0,
-  });
+  let transaction;
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    transaction = await connection.getTransaction(signature, {
+      commitment: "finalized",
+      maxSupportedTransactionVersion: 0,
+    });
+    if (transaction?.meta) break;
+    await new Promise((resolve) => setTimeout(resolve, 1_000));
+  }
   invariant(transaction?.meta && !transaction.meta.err, `Transaction ${signature} did not reach successful finalized state`);
   return {
     signature,
@@ -320,8 +331,7 @@ async function main() {
   const authority = await loadOrCreateKeypair("authority");
   const buyer = await loadOrCreateKeypair("buyer");
   const seller = await loadOrCreateKeypair("seller");
-  await ensureProgramKeypair();
-  const programKeypair = Keypair.fromSecretKey(Uint8Array.from(JSON.parse(await readFile(PROGRAM_ID_PATH, "utf8"))));
+  const programKeypair = await loadProgramKeypair();
   const programId = programKeypair.publicKey;
   const publicRoles = {
     authority: authority.publicKey.toBase58(),
@@ -438,6 +448,17 @@ async function main() {
   txs.push({ label: "Close no-cross auction at cutoff", wallet: "authority", ...refundClose });
   const maximumClose = await sendFinalized(authority, [await closeInstruction(programId, maximum.auction, authority)]);
   txs.push({ label: "Close maximum 32-order, 101-tick auction", wallet: "authority", ...maximumClose });
+
+  for (const [label, transaction] of [
+    ["Matched auction close", matchedClose],
+    ["No-cross auction close", refundClose],
+    ["Maximum-bound auction close", maximumClose],
+  ]) {
+    invariant(Number.isSafeInteger(transaction.computeUnitsConsumed) && transaction.computeUnitsConsumed > 0,
+      `${label} finalized transaction did not expose computeUnitsConsumed.`);
+    invariant(Number.isSafeInteger(transaction.feeLamports) && transaction.feeLamports >= 0,
+      `${label} finalized transaction did not expose a finite fee in lamports.`);
+  }
 
   const closeDetails = {
     matched: {
