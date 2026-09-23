@@ -24,13 +24,41 @@ import {
 } from "@solana/spl-token";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const DEVNET = "https://api.devnet.solana.com";
+const CLUSTER_NAME = process.env.CALLWINDOW_CLUSTER ?? "devnet";
+const CLUSTERS = {
+  devnet: { rpc: "https://api.devnet.solana.com", keyDirectory: "devnet" },
+  localnet: { rpc: "http://127.0.0.1:8899", keyDirectory: "localnet" },
+};
+const cluster = CLUSTERS[CLUSTER_NAME];
+if (!cluster) throw new Error("CALLWINDOW_CLUSTER must be devnet or localnet.");
+const CLUSTER_RPC = cluster.rpc;
+const CUTOFF_SECONDS = Number(process.env.CALLWINDOW_CUTOFF_SECONDS ?? 90);
+if (!Number.isSafeInteger(CUTOFF_SECONDS) || CUTOFF_SECONDS < 10) {
+  throw new Error("CALLWINDOW_CUTOFF_SECONDS must be an integer of at least 10 seconds.");
+}
 const PROGRAM_ID_PATH = path.join(ROOT, "target/deploy/callwindow_escrow-keypair.json");
 const DEPLOY_PATH = path.join(ROOT, "target/deploy/callwindow_escrow.so");
-const KEY_DIR = path.join(ROOT, "target/devnet");
+const KEY_DIR = path.join(ROOT, "target", cluster.keyDirectory);
 const PROGRAM_BIN = path.join(ROOT, ".tools/solana/active_release/bin/solana");
 const MAX_ORDERS = 32;
 const MAX_CANDIDATE_TICKS = 101;
+const PROGRAM_BUFFER_METADATA_BYTES = 37;
+const PROGRAM_DATA_METADATA_BYTES = 45;
+const PROGRAM_ACCOUNT_BYTES = 36;
+const UPGRADEABLE_LOADER_ID = new PublicKey("BPFLoaderUpgradeab1e11111111111111111111111");
+const TOKEN_MINT_ACCOUNT_BYTES = 82;
+const TOKEN_ACCOUNT_BYTES = 165;
+// This build's local deployment measured 1,445,000 lamports in loader-write fees for 288,048 bytes.
+const PROGRAM_WRITE_BYTES_PER_TRANSACTION = 1_000;
+const BASE_TRANSACTION_FEE_LAMPORTS = 5_000;
+// Measured in the complete local flow after subtracting the rent for its created accounts.
+const AUTHORITY_DEMO_FEE_ESTIMATE_LAMPORTS = 80_000;
+// Holds room for network fee variation and small deployment-account differences.
+const AUTHORITY_FUNDING_RESERVE_LAMPORTS = 30_000_000;
+const FUNDING_ROUNDING_LAMPORTS = 10_000_000;
+const ROLE_WALLET_RESERVE_LAMPORTS = 10_000_000;
+const BUYER_OBSERVED_FEES_LAMPORTS = 50_000;
+const SELLER_OBSERVED_FEES_LAMPORTS = 40_000;
 const FIRST_TICK_CENTS = 1_950;
 const OPENING_REFERENCE_CENTS = 2_000;
 const CANDIDATE_TICK_COUNT = 101;
@@ -39,7 +67,7 @@ const QUOTE_MINT_DECIMALS = 6;
 const ORDER_ACTIVE = 0;
 const ORDER_CANCELLED = 1;
 const AUCTION_CLOSED = 1;
-const connection = new Connection(DEVNET, "finalized");
+const connection = new Connection(CLUSTER_RPC, "finalized");
 
 function invariant(value, message) {
   if (!value) throw new Error(message);
@@ -57,26 +85,129 @@ async function loadOrCreateKeypair(name) {
   return keypair;
 }
 
-async function ensureDevnetFunds(keypair, requiredSol) {
-  const requiredLamports = requiredSol * LAMPORTS_PER_SOL;
+async function ensureClusterFunds(keypair, requiredLamports) {
   let balance = await connection.getBalance(keypair.publicKey, "finalized");
+  if (balance >= requiredLamports) return balance;
+  if (CLUSTER_NAME === "devnet") {
+    throw new Error(`Devnet wallet ${keypair.publicKey.toBase58()} has ${balance} lamports; ${requiredLamports} are required. No public devnet faucet request was sent.`);
+  }
   let attempts = 0;
-  const maxAttempts = Math.ceil(requiredSol / 2) + 3;
+  const maxAttempts = Math.ceil(requiredLamports / (2 * LAMPORTS_PER_SOL)) + 3;
   while (balance < requiredLamports && attempts < maxAttempts) {
     attempts += 1;
     const amount = Math.min(2 * LAMPORTS_PER_SOL, requiredLamports - balance);
     const signature = await connection.requestAirdrop(keypair.publicKey, amount);
     const result = await connection.confirmTransaction(signature, "finalized");
-    invariant(!result.value.err, `Devnet faucet transfer failed for ${keypair.publicKey.toBase58()}`);
+    invariant(!result.value.err, `${CLUSTER_NAME} faucet transfer failed for ${keypair.publicKey.toBase58()}`);
     balance = await connection.getBalance(keypair.publicKey, "finalized");
   }
-  invariant(balance >= requiredLamports, `Devnet wallet ${keypair.publicKey.toBase58()} has ${balance} lamports; ${requiredSol} SOL is required.`);
+  invariant(balance >= requiredLamports, `${CLUSTER_NAME} wallet ${keypair.publicKey.toBase58()} has ${balance} lamports; ${requiredLamports} lamports are required.`);
+  return balance;
+}
+
+function ceilToMultiple(value, multiple) {
+  return Math.ceil(value / multiple) * multiple;
+}
+
+async function inspectExistingDeployment(programId, expectedUpgradeAuthority) {
+  const programAccount = await connection.getAccountInfo(programId, "finalized");
+  if (!programAccount) {
+    return {
+      mode: "fresh",
+      programAccountLamports: 0,
+      programDataAddress: null,
+      programDataLamports: 0,
+    };
+  }
+  invariant(programAccount.executable, "An account already exists at the program ID but is not executable.");
+  invariant(programAccount.owner.equals(UPGRADEABLE_LOADER_ID), "The existing program is not owned by Solana's upgradeable loader.");
+  invariant(programAccount.data.length >= PROGRAM_ACCOUNT_BYTES, "The existing upgradeable program account data is incomplete.");
+  const programDataAddress = new PublicKey(programAccount.data.subarray(4, 36));
+  const programDataAccount = await connection.getAccountInfo(programDataAddress, "finalized");
+  invariant(programDataAccount, "The existing ProgramData account is missing at finalized commitment.");
+  invariant(programDataAccount.owner.equals(UPGRADEABLE_LOADER_ID), "The existing ProgramData account is not owned by Solana's upgradeable loader.");
+  invariant(programDataAccount.data.length >= PROGRAM_DATA_METADATA_BYTES, "The existing ProgramData account data is incomplete.");
+  invariant(programDataAccount.data.readUInt32LE(0) === 3, "The existing program has an invalid ProgramData state.");
+  invariant(programDataAccount.data[12] === 1, "The existing program is immutable and cannot be upgraded by the demo authority.");
+  const upgradeAuthority = new PublicKey(programDataAccount.data.subarray(13, 45));
+  invariant(upgradeAuthority.equals(expectedUpgradeAuthority), "The existing program's upgrade authority does not match the demo authority.");
+  return {
+    mode: "upgrade",
+    programAccountLamports: programAccount.lamports,
+    programDataAddress,
+    programDataLamports: programDataAccount.lamports,
+  };
+}
+
+async function calculateFundingEstimate(programLength, existingDeployment) {
+  const programBufferBytes = programLength + PROGRAM_BUFFER_METADATA_BYTES;
+  const programDataBytes = programLength + PROGRAM_DATA_METADATA_BYTES;
+  const programRentLamports = await connection.getMinimumBalanceForRentExemption(PROGRAM_ACCOUNT_BYTES, "finalized");
+  const bufferRentLamports = await connection.getMinimumBalanceForRentExemption(programBufferBytes, "finalized");
+  const programDataRentLamports = await connection.getMinimumBalanceForRentExemption(programDataBytes, "finalized");
+  const auctionRentLamports = await connection.getMinimumBalanceForRentExemption(8 + 204 + 4 + MAX_ORDERS * 61, "finalized");
+  const mintRentLamports = await connection.getMinimumBalanceForRentExemption(TOKEN_MINT_ACCOUNT_BYTES, "finalized");
+  const tokenAccountRentLamports = await connection.getMinimumBalanceForRentExemption(TOKEN_ACCOUNT_BYTES, "finalized");
+  const programRentIncreaseLamports = Math.max(0, programRentLamports - existingDeployment.programAccountLamports);
+  const programDataRentIncreaseLamports = Math.max(0, programDataRentLamports - existingDeployment.programDataLamports);
+  const deploymentPersistentRentIncreaseLamports = programRentIncreaseLamports + programDataRentIncreaseLamports;
+  const deploymentPeakRentLamports = existingDeployment.mode === "fresh"
+    ? Math.max(
+      bufferRentLamports + programRentLamports,
+      programDataRentLamports + programRentLamports,
+    )
+    : bufferRentLamports + deploymentPersistentRentIncreaseLamports;
+  const demoAccountRentLamports = 3 * auctionRentLamports
+    + 2 * mintRentLamports
+    + 10 * tokenAccountRentLamports;
+  const deploymentWriteTransactionsEstimate = Math.ceil(programLength / PROGRAM_WRITE_BYTES_PER_TRANSACTION);
+  const deploymentFeeEstimateLamports = deploymentWriteTransactionsEstimate * BASE_TRANSACTION_FEE_LAMPORTS;
+  const calculatedMinimumLamports = deploymentPeakRentLamports
+    + demoAccountRentLamports
+    + deploymentFeeEstimateLamports
+    + AUTHORITY_DEMO_FEE_ESTIMATE_LAMPORTS;
+  const authorityFundingTargetLamports = ceilToMultiple(
+    calculatedMinimumLamports + AUTHORITY_FUNDING_RESERVE_LAMPORTS,
+    FUNDING_ROUNDING_LAMPORTS,
+  );
+  return {
+    programLength,
+    accountBytes: {
+      buffer: programBufferBytes,
+      programData: programDataBytes,
+      program: PROGRAM_ACCOUNT_BYTES,
+      auction: 8 + 204 + 4 + MAX_ORDERS * 61,
+      mint: TOKEN_MINT_ACCOUNT_BYTES,
+      tokenAccount: TOKEN_ACCOUNT_BYTES,
+    },
+    rentLamports: {
+      buffer: bufferRentLamports,
+      programData: programDataRentLamports,
+      program: programRentLamports,
+      auction: auctionRentLamports,
+      mint: mintRentLamports,
+      tokenAccount: tokenAccountRentLamports,
+    },
+    deploymentMode: existingDeployment.mode,
+    existingProgramDataAddress: existingDeployment.programDataAddress?.toBase58() ?? null,
+    deploymentPersistentRentIncreaseLamports,
+    deploymentPeakRentLamports,
+    demoAccountRentLamports,
+    deploymentWriteTransactionsEstimate,
+    deploymentFeeEstimateLamports,
+    authorityDemoFeeEstimateLamports: AUTHORITY_DEMO_FEE_ESTIMATE_LAMPORTS,
+    calculatedMinimumLamports,
+    reserveLamports: AUTHORITY_FUNDING_RESERVE_LAMPORTS,
+    authorityFundingTargetLamports,
+    buyerFundingTargetLamports: BUYER_OBSERVED_FEES_LAMPORTS + ROLE_WALLET_RESERVE_LAMPORTS,
+    sellerFundingTargetLamports: SELLER_OBSERVED_FEES_LAMPORTS + ROLE_WALLET_RESERVE_LAMPORTS,
+  };
 }
 
 function executeDeploy(authorityPath, programIdPath) {
   execFileSync(PROGRAM_BIN, [
     "program", "deploy", DEPLOY_PATH,
-    "--url", DEVNET,
+    "--url", CLUSTER_RPC,
     "--keypair", authorityPath,
     "--program-id", programIdPath,
     "--upgrade-authority", authorityPath,
@@ -90,7 +221,7 @@ async function loadProgramKeypair() {
   try {
     keypairContents = await readFile(PROGRAM_ID_PATH, "utf8");
   } catch (error) {
-    if (error?.code === "ENOENT") throw new Error("Program keypair is missing. Run `npm run build:program` before the devnet demo.");
+    if (error?.code === "ENOENT") throw new Error("Program keypair is missing. Run `npm run build:program` before the auction demo.");
     throw error;
   }
   const keypair = Keypair.fromSecretKey(Uint8Array.from(JSON.parse(keypairContents)));
@@ -173,6 +304,20 @@ async function sendFinalized(payer, instructionList, signers = [payer]) {
     feeLamports: transaction.meta.fee,
     computeUnitsConsumed: transaction.meta.computeUnitsConsumed ?? null,
   };
+}
+
+async function getFinalizedTimestamp() {
+  const slot = await connection.getSlot("finalized");
+  const blockTime = await connection.getBlockTime(slot);
+  return Number.isSafeInteger(blockTime) ? blockTime : null;
+}
+
+async function waitForCutoff(cutoffTime) {
+  while (true) {
+    const chainTime = await getFinalizedTimestamp();
+    if (chainTime !== null && chainTime >= cutoffTime) return;
+    await new Promise((resolve) => setTimeout(resolve, 2_000));
+  }
 }
 
 async function createAuction({ programId, authority, baseMint, quoteMint, auctionId, cutoffTime }) {
@@ -326,7 +471,7 @@ function tokenDelta(before, after) {
 }
 
 async function main() {
-  invariant(MAX_ORDERS === 32 && MAX_CANDIDATE_TICKS === 101, "The devnet runner caps do not match the tested clearing caps.");
+  invariant(MAX_ORDERS === 32 && MAX_CANDIDATE_TICKS === 101, "The auction runner caps do not match the tested clearing caps.");
   await mkdir(KEY_DIR, { recursive: true, mode: 0o700 });
   const authority = await loadOrCreateKeypair("authority");
   const buyer = await loadOrCreateKeypair("buyer");
@@ -340,20 +485,38 @@ async function main() {
   };
   invariant(new Set(Object.values(publicRoles)).size === 3, "Authority, buyer, and seller must use separate wallets.");
 
-  console.log("Funding three separate devnet wallets with faucet SOL as needed.");
+  console.log(`Checking finalized balances for three separate ${CLUSTER_NAME} wallets.`);
   const programLength = (await stat(DEPLOY_PATH)).size;
-  const dataRent = await connection.getMinimumBalanceForRentExemption(programLength + 128, "finalized");
-  const programAccountRent = await connection.getMinimumBalanceForRentExemption(128, "finalized");
-  const deploymentSol = Math.ceil((2 * dataRent + programAccountRent + LAMPORTS_PER_SOL) / LAMPORTS_PER_SOL);
-  await ensureDevnetFunds(authority, deploymentSol);
-  await ensureDevnetFunds(buyer, 1);
-  await ensureDevnetFunds(seller, 1);
+  const existingDeployment = await inspectExistingDeployment(programId, authority.publicKey);
+  const fundingEstimate = await calculateFundingEstimate(programLength, existingDeployment);
+  const { authorityFundingTargetLamports } = fundingEstimate;
+  console.log(`Authority funding estimate for ${fundingEstimate.deploymentMode} deployment: ${fundingEstimate.calculatedMinimumLamports} lamports minimum; target ${authorityFundingTargetLamports} lamports including ${fundingEstimate.reserveLamports} lamports reserve.`);
+  console.log(`Built program ${fundingEstimate.programLength} bytes; peak deployment rent ${fundingEstimate.deploymentPeakRentLamports}; demo account rent ${fundingEstimate.demoAccountRentLamports}; estimated deployment fees ${fundingEstimate.deploymentFeeEstimateLamports}; observed authority operation fees ${fundingEstimate.authorityDemoFeeEstimateLamports} lamports.`);
+  await ensureClusterFunds(authority, authorityFundingTargetLamports);
+  await ensureClusterFunds(buyer, fundingEstimate.buyerFundingTargetLamports);
+  await ensureClusterFunds(seller, fundingEstimate.sellerFundingTargetLamports);
   console.log(`Authority ${publicRoles.authority}; buyer ${publicRoles.buyer}; seller ${publicRoles.seller}`);
 
-  console.log(`Deploying program ${programId.toBase58()} to devnet.`);
+  const authorityLamportsBeforeDeploy = await connection.getBalance(authority.publicKey, "finalized");
+  const buyerLamportsBeforeRun = await connection.getBalance(buyer.publicKey, "finalized");
+  const sellerLamportsBeforeRun = await connection.getBalance(seller.publicKey, "finalized");
+  console.log(`Deploying program ${programId.toBase58()} to ${CLUSTER_NAME}.`);
   executeDeploy(path.join(KEY_DIR, "authority.json"), PROGRAM_ID_PATH);
+  const authorityLamportsAfterDeploy = await connection.getBalance(authority.publicKey, "finalized");
   const programAccount = await connection.getAccountInfo(programId, "finalized");
-  invariant(programAccount?.executable, "The devnet program account is not executable at finalized commitment.");
+  invariant(programAccount?.executable, `The ${CLUSTER_NAME} program account is not executable at finalized commitment.`);
+  invariant(programAccount.data.length >= PROGRAM_ACCOUNT_BYTES, "The deployed upgradeable program account data is incomplete.");
+  const programDataAddress = new PublicKey(programAccount.data.subarray(4, 36));
+  if (existingDeployment.programDataAddress) {
+    invariant(programDataAddress.equals(existingDeployment.programDataAddress), "The upgraded program changed its ProgramData address unexpectedly.");
+  }
+  const programDataAccount = await connection.getAccountInfo(programDataAddress, "finalized");
+  invariant(programDataAccount, "The deployed ProgramData account is missing at finalized commitment.");
+  const deploymentCostLamports = authorityLamportsBeforeDeploy - authorityLamportsAfterDeploy;
+  const deploymentPersistentRentIncreaseLamports = Math.max(0, programAccount.lamports - existingDeployment.programAccountLamports)
+    + Math.max(0, programDataAccount.lamports - existingDeployment.programDataLamports);
+  const deploymentFeeLamportsMeasured = deploymentCostLamports - deploymentPersistentRentIncreaseLamports;
+  invariant(deploymentFeeLamportsMeasured >= 0, "Measured deployment cost did not cover incremental program account rent.");
 
   const baseMint = await createMint(connection, authority, authority.publicKey, null, BASE_MINT_DECIMALS);
   const quoteMint = await createMint(connection, authority, authority.publicKey, null, QUOTE_MINT_DECIMALS);
@@ -366,11 +529,13 @@ async function main() {
   const mintProof = {
     base: { name: "DEMO-EQUITY", address: baseMint.toBase58(), decimals: BASE_MINT_DECIMALS },
     quote: { name: "DEMO-USD", address: quoteMint.toBase58(), decimals: QUOTE_MINT_DECIMALS },
-    disclosure: "Devnet demonstration mints with no equity backing and no connection to the PreStocks KALSHI mint.",
+    disclosure: "Test demonstration mints with no equity backing and no connection to the PreStocks KALSHI mint.",
   };
 
   const now = Math.floor(Date.now() / 1000);
-  const cutoffTime = now + 90;
+  const chainTimeAtOpen = await getFinalizedTimestamp();
+  invariant(chainTimeAtOpen !== null, "Could not read finalized chain time before opening the auctions.");
+  const cutoffTime = chainTimeAtOpen + CUTOFF_SECONDS;
   const matched = await createAuction({
     programId, authority, baseMint, quoteMint, auctionId: BigInt(now) * 10n, cutoffTime,
   });
@@ -437,10 +602,11 @@ async function main() {
     txs.push({ label: `Place maximum test sell orders ${index + 1}–${index + 8}`, wallet: "seller", ...await sendFinalized(seller, maximumSellOrders.slice(index, index + 8)) });
   }
 
-  const secondsUntilCutoff = cutoffTime - Math.floor(Date.now() / 1000);
+  const currentChainTime = await getFinalizedTimestamp();
+  const secondsUntilCutoff = currentChainTime === null ? CUTOFF_SECONDS : cutoffTime - currentChainTime;
   if (secondsUntilCutoff > 0) {
     console.log(`Waiting ${secondsUntilCutoff} seconds for the fixed order window to end.`);
-    await new Promise((resolve) => setTimeout(resolve, secondsUntilCutoff * 1_000 + 500));
+    await waitForCutoff(cutoffTime);
   }
   const matchedClose = await sendFinalized(authority, [await closeInstruction(programId, matched.auction, authority)]);
   txs.push({ label: "Close matched auction at cutoff", wallet: "authority", ...matchedClose });
@@ -557,6 +723,10 @@ async function main() {
     buyerQuoteDelta: tokenDelta(buyerQuoteBefore, buyerQuoteAfter),
     sellerBaseDelta: tokenDelta(sellerBaseBefore, sellerBaseAfter),
     sellerQuoteDelta: tokenDelta(sellerQuoteBefore, sellerQuoteAfter),
+    buyerBaseFinalTokenUnits: buyerBaseAfter.toString(),
+    buyerQuoteFinalTokenUnits: buyerQuoteAfter.toString(),
+    sellerBaseFinalTokenUnits: sellerBaseAfter.toString(),
+    sellerQuoteFinalTokenUnits: sellerQuoteAfter.toString(),
     buyerNoCrossRefund: tokenDelta(buyerQuoteAfterMatchedClaims, buyerQuoteAfterRefundClaims),
     sellerNoCrossRefund: tokenDelta(sellerBaseAfterMatchedClaims, sellerBaseAfterRefundClaims),
     cancelledBuyerQuoteDelta: tokenDelta(quoteBeforeCancellation, quoteAfterCancellation),
@@ -581,14 +751,51 @@ async function main() {
   invariant(buyerBaseAfter - buyerBaseBefore === 300n + 1_600n, "Maximum-bound buyer share claims did not reconcile.");
   invariant(sellerQuoteAfter - sellerQuoteBefore === 60_000_000n + 320_000_000n, "Maximum-bound seller proceeds did not reconcile.");
 
+  const authorityLamportsFinal = await connection.getBalance(authority.publicKey, "finalized");
+  const buyerLamportsFinal = await connection.getBalance(buyer.publicKey, "finalized");
+  const sellerLamportsFinal = await connection.getBalance(seller.publicKey, "finalized");
+  const lamportReconciliation = {
+    authority: {
+      fundedBalanceLamports: authorityLamportsBeforeDeploy,
+      postDeployBalanceLamports: authorityLamportsAfterDeploy,
+      finalBalanceLamports: authorityLamportsFinal,
+      deployCostLamports: deploymentCostLamports,
+      totalDemoCostLamports: authorityLamportsBeforeDeploy - authorityLamportsFinal,
+    },
+    buyer: {
+      fundedBalanceLamports: buyerLamportsBeforeRun,
+      finalBalanceLamports: buyerLamportsFinal,
+      totalFeeLamports: buyerLamportsBeforeRun - buyerLamportsFinal,
+    },
+    seller: {
+      fundedBalanceLamports: sellerLamportsBeforeRun,
+      finalBalanceLamports: sellerLamportsFinal,
+      totalFeeLamports: sellerLamportsBeforeRun - sellerLamportsFinal,
+    },
+  };
+
   const manifest = {
-    network: "devnet",
-    clusterRpc: DEVNET,
+    network: CLUSTER_NAME,
+    clusterRpc: CLUSTER_RPC,
     programId: programId.toBase58(),
+    builtProgramBytes: programLength,
+    fundingEstimate,
+    authorityFundingTargetLamports,
+    deploymentCostLamports,
+    deploymentCostBreakdown: {
+      mode: existingDeployment.mode,
+      persistentRentIncreaseLamports: deploymentPersistentRentIncreaseLamports,
+      measuredFeeLamports: deploymentFeeLamportsMeasured,
+      feeEstimateLamports: fundingEstimate.deploymentFeeEstimateLamports,
+      programDataAddress: programDataAddress.toBase58(),
+      programDataBytes: programDataAccount.data.length,
+      programAccountBytes: programAccount.data.length,
+    },
     authority: publicRoles.authority,
     separateWallets: { buyer: publicRoles.buyer, seller: publicRoles.seller },
     auctionAddress: matched.auction.toBase58(),
     auctionId: matched.auctionId,
+    orderWindowSeconds: CUTOFF_SECONDS,
     cutoffTime: new Date(cutoffTime * 1_000).toISOString(),
     caps: { maxOrders: MAX_ORDERS, maxCandidateTicks: MAX_CANDIDATE_TICKS, priceTickCents: 1 },
     mints: mintProof,
@@ -619,16 +826,23 @@ async function main() {
     closingComputeUnits: maximumClose.computeUnitsConsumed,
     closingFeeLamports: maximumClose.feeLamports,
     reconciliation,
+    lamportReconciliation,
     transactions: txs,
     finalizedAt: new Date().toISOString(),
   };
   const manifestPath = path.join(KEY_DIR, "manifest.json");
   await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, { mode: 0o600 });
-  console.log(`Finalized devnet flow passed. Public proof manifest: ${manifestPath}`);
+  console.log(`Finalized ${CLUSTER_NAME} flow passed. Proof manifest: ${manifestPath}`);
   console.log(JSON.stringify({ programId: manifest.programId, mints: manifest.mints, auctions: {
     matched: manifest.matchedAuction.address,
     noCrossRefund: manifest.noCrossAuction.address,
-  }, closingCost: manifest.closingCost, reconciliation: manifest.reconciliation }, null, 2));
+    maximum: manifest.maximumAuction.address,
+  }, closingCost: manifest.closingCost, reconciliation: manifest.reconciliation,
+  fundingEstimate: manifest.fundingEstimate,
+  deploymentCostBreakdown: manifest.deploymentCostBreakdown,
+  lamportReconciliation: manifest.lamportReconciliation,
+  transactions: manifest.transactions.map(({ label, wallet, signature, status }) => ({ label, wallet, signature, status })),
+  }, null, 2));
 }
 
 main().catch((error) => {

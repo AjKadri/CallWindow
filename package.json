@@ -9,6 +9,7 @@
     "build": "vite build",
     "build:program": "sh scripts/build-program.sh",
     "demo:devnet": "npm run build:program && node scripts/devnet-demo.mjs",
+    "demo:localnet": "npm run build:program && CALLWINDOW_CLUSTER=localnet CALLWINDOW_CUTOFF_SECONDS=240 node scripts/devnet-demo.mjs",
     "test": "node --test",
     "bench:bounds": "node scripts/benchmark-bounds.mjs"
   },

@@ -16,13 +16,24 @@ Open the Vite address printed by `npm run dev`. The PreStocks record and Jupiter
 
 ## Verify the bounded auction
 
+To run the three-wallet flow on a local validator first, start it in a separate terminal:
+
+```sh
+.tools/solana/active_release/bin/solana-test-validator --reset --ledger target/localnet-ledger --quiet
+npm run demo:localnet
+```
+
+For public devnet, run:
+
 ```sh
 npm test
 npm run bench:bounds
 npm run demo:devnet
 ```
 
-`demo:devnet` builds and deploys the program, creates separate authority, buyer, and seller wallets, and exercises cancellation, a matched partial fill, a no-cross refund, and the 32-order/101-tick maximum. Wallet keyfiles and the public proof manifest are stored under the ignored `target/devnet/` directory. The script requests devnet SOL from the public faucet as needed.
+Both demo commands build and deploy the program, create separate authority, buyer, and seller wallets, and exercise cancellation, a matched partial fill, a no-cross refund, and the 32-order/101-tick maximum. Localnet and devnet keyfiles and proof manifests are isolated under their respective ignored `target/localnet/` and `target/devnet/` directories. Localnet funding uses only the local validator faucet. Devnet runs check finalized wallet balances and stop if any wallet is underfunded; they do not request SOL from the public RPC faucet.
+
+The devnet preflight calculates the authority target from the built program size, current finalized rent-exemption values for the upgradeable-loader and auction accounts, a deployment write-fee estimate checked against local deployment fees, observed authority transaction fees, and a 0.03 SOL reserve. A fresh deployment uses the larger of its buffer and persistent program-account rent peaks. An upgrade adds only any missing persistent rent and includes a temporary buffer rent. Deployment reconciliation measures changes in Program and ProgramData lamports, so a repeat upgrade does not count existing rent as a new cost. The buyer and seller targets include their measured local transaction fees and a 0.01 SOL reserve each.
 
 On a fresh checkout, `build:program` creates the ignored program keypair and synchronizes the Rust and Anchor program IDs before compiling. The runner checks that all three IDs still match before it contacts devnet.
 
