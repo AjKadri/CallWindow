@@ -1,0 +1,11 @@
+node_modules/
+dist/
+.env
+.env.*
+!.env.example
+target/
+.anchor/
+.agent/
+coverage/
+*.log
+
