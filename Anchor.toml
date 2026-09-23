@@ -1,0 +1,17 @@
+[features]
+seeds = false
+skip-lint = false
+
+[programs.localnet]
+callwindow_escrow = "GxX6X6zZSQSuxEoTHPwaAmKCcpGRVRiB6ERANHzS7Eq9"
+
+[programs.devnet]
+callwindow_escrow = "GxX6X6zZSQSuxEoTHPwaAmKCcpGRVRiB6ERANHzS7Eq9"
+
+[provider]
+cluster = "Devnet"
+wallet = "target/devnet/authority.json"
+
+[toolchain]
+anchor_version = "1.2.0"
+solana_version = "4.2.2"

@@ -1,0 +1,22 @@
+{
+  "name": "callwindow",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "server": "node --env-file-if-exists=.env src/server/main.mjs",
+    "build": "vite build",
+    "build:program": "sh scripts/build-program.sh",
+    "demo:devnet": "npm run build:program && node scripts/devnet-demo.mjs",
+    "test": "node --test",
+    "bench:bounds": "node scripts/benchmark-bounds.mjs"
+  },
+  "dependencies": {
+    "@solana/spl-token": "^0.4.15",
+    "@solana/web3.js": "^1.99.0"
+  },
+  "devDependencies": {
+    "vite": "^8.3.0"
+  }
+}

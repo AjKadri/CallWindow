@@ -1,5 +1,6 @@
 node_modules/
 dist/
+.tools/
 .env
 .env.*
 !.env.example
@@ -8,4 +9,3 @@ target/
 .agent/
 coverage/
 *.log
-
