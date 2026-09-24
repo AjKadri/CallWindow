@@ -5,6 +5,7 @@ import {
   DEMO_QUOTE_MINT,
   DEVNET_PROGRAM_ID,
   canShareSetup,
+  creatorWindowState,
   orderRequirements,
   previewAuction,
   sharedRoomUrl,
@@ -65,6 +66,24 @@ test("creator sharing is gated on both finalized signatures", () => {
   assert.equal(canShareSetup({ createSignature: "create" }), false);
   assert.equal(canShareSetup({ openingSignature: "open" }), false);
   assert.equal(canShareSetup({ createSignature: "create", openingSignature: "open" }), true);
+});
+
+test("creator form changes from connect to create and preserves existing setup state", () => {
+  const initial = creatorWindowState({ walletKey: false });
+  assert.equal(initial.buttonText, "Connect wallet to create window");
+  assert.equal(initial.buttonDisabled, true);
+  assert.match(initial.status, /Connect a devnet wallet/);
+  const connected = creatorWindowState({ walletKey: true });
+  assert.equal(connected.buttonText, "Create window account");
+  assert.equal(connected.buttonDisabled, false);
+  assert.match(connected.status, /Connected on devnet/);
+  const existing = creatorWindowState({ walletKey: true, setup: { createSignature: "create" } });
+  assert.equal(existing.buttonText, "Window account created");
+  assert.equal(existing.buttonDisabled, true);
+  assert.match(existing.status, /Finish the opening order/);
+  const ready = creatorWindowState({ walletKey: true, setup: { createSignature: "create", openingSignature: "open" } });
+  assert.equal(ready.buttonText, "Opening order finalized");
+  assert.match(ready.status, /can be shared/);
 });
 
 test("order requirements use deployed mint decimals", () => {

@@ -162,6 +162,7 @@ select:focus, input:focus, button:focus-visible, a:focus-visible { outline: 3px 
 .action-note { flex-basis: 100%; margin: 0; color: #718078; font-size: 10px; }
 .order-panel { position: sticky; top: 16px; }
 .wallet-status { margin: 10px 0 18px; color: #78847c; font-size: 10px; overflow-wrap: anywhere; }
+.wallet-network-help { margin: -8px 0 18px; padding: 9px 10px; border: 1px solid #d3a16e; border-radius: 10px; background: #fff8ed; color: #8a5d2e; font-size: 10px; line-height: 1.5; }
 .order-form { padding-top: 15px; border-top: 1px solid #e6ebe5; }
 .order-form select, .order-form input { min-height: 39px; font-size: 11px; }
 .order-form label { font-size: 10px; }

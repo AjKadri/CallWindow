@@ -1,7 +1,15 @@
 import { Buffer } from "buffer/";
 import { evaluateQuoteLimit } from "../src/quote/limit.mjs";
 import {
+  classifyDevnetProviderError,
+  DevnetPreflightError,
+  readProviderNetwork,
+  requireDevnetNetwork,
+  signAfterDevnetPreflight,
+} from "../src/wallet/devnet.mjs";
+import {
   canShareSetup,
+  creatorWindowState,
   DEMO_BASE_MINT,
   DEMO_QUOTE_MINT,
   DEVNET_PROGRAM_ID,
@@ -63,6 +71,7 @@ const state = {
   walletBalances: null,
   wallet: null,
   walletKey: null,
+  walletNetwork: { status: "unknown", reported: null },
   busy: false,
 };
 
@@ -551,12 +560,48 @@ function renderRoomCountdown() {
   }
 }
 
+function walletCanTransact() {
+  return Boolean(state.walletKey && state.walletNetwork?.status === "devnet");
+}
+
+function walletNetworkReason() {
+  return requireDevnetNetwork(state.walletNetwork).reason;
+}
+
+function renderWalletNetworkState() {
+  const help = $("wallet-network-help");
+  if (state.walletNetwork?.status === "devnet") {
+    if (help) help.hidden = true;
+    return;
+  }
+  if (help) {
+    help.hidden = false;
+    help.textContent = "In Phantom, open the network selector, choose Solana Devnet, disconnect this site, then reconnect. CallWindow will not sign a mainnet transaction.";
+  }
+  if ($("wallet-status") && state.walletKey) $("wallet-status").textContent = walletNetworkReason();
+}
+
+async function requireConnectedDevnetWallet() {
+  if (!state.wallet || !state.walletKey) throw new Error("Connect a devnet wallet first.");
+  state.walletNetwork = await readProviderNetwork(state.wallet);
+  renderWalletNetworkState();
+  renderAuctionSetup();
+  const requirement = requireDevnetNetwork(state.walletNetwork);
+  if (!requirement.ok) throw new Error(requirement.reason);
+}
+
 function renderFundingAvailability() {
   if (!isRoomPage) return;
   const button = $("get-test-assets");
   const status = $("funding-status");
   if (!button || !status) return;
   const distributor = state.distributor;
+  if (state.walletKey && !walletCanTransact()) {
+    button.disabled = true;
+    button.textContent = "Switch Phantom to Devnet";
+    status.textContent = walletNetworkReason();
+    return;
+  }
   if (state.sharedAuction) {
     const windowOpen = state.auction?.state === 0
       && BigInt(Math.floor(Date.now() / 1000)) < state.auction.cutoffTime;
@@ -785,7 +830,7 @@ function renderAuction() {
     : canAbort ? "Anyone can abort after 30 minutes if no claim has started." : "";
   if ($("room-next-action")) {
     $("room-next-action").textContent = windowOpen
-      ? state.walletKey ? "Place a limit order" : "Connect wallet"
+      ? walletCanTransact() ? "Place a limit order" : "Connect a devnet wallet"
       : auction.state === 1 ? "Claim or refund" : auction.state === 0 ? "Close the window" : "Refund available";
   }
   if ($("room-state-note")) {
@@ -796,9 +841,10 @@ function renderAuction() {
           : "The program state exposes refund actions where applicable.";
   }
   const orderButton = $("submit-order");
-  orderButton.disabled = !state.walletKey || !windowOpen;
+  orderButton.disabled = !walletCanTransact() || !windowOpen;
   orderButton.textContent = !state.walletKey
     ? "Connect wallet to continue"
+    : !walletCanTransact() ? "Switch Phantom to Devnet"
     : windowOpen ? "Review and submit devnet order" : "Order window is closed";
   updateEscrowEstimate();
 }
@@ -1078,7 +1124,7 @@ async function buildPermissionlessInstruction(name) {
 }
 
 async function submitAndFinalize(instructions, label, { button = null, reload = true } = {}) {
-  if (!state.wallet || !state.walletKey) throw new Error("Connect a devnet wallet first.");
+  await requireConnectedDevnetWallet();
   state.busy = true;
   renderAuction();
   const actionButton = button ?? $("submit-order");
@@ -1091,11 +1137,20 @@ async function submitAndFinalize(instructions, label, { button = null, reload = 
   let signature;
   try {
     const latest = await connection.getLatestBlockhash("finalized");
-    const transaction = new Transaction({
-      feePayer: state.walletKey,
-      recentBlockhash: latest.blockhash,
-    }).add(...instructions);
-    const result = await state.wallet.signAndSendTransaction(transaction);
+    const transaction = new Transaction().add(...instructions);
+    transaction.feePayer = state.walletKey;
+    transaction.recentBlockhash = latest.blockhash;
+    transaction.lastValidBlockHeight = latest.lastValidBlockHeight;
+    let result;
+    try {
+      result = await signAfterDevnetPreflight(transaction, {
+        simulate: (builtTransaction) => connection.simulateTransaction(builtTransaction),
+        send: (builtTransaction) => state.wallet.signAndSendTransaction(builtTransaction),
+      });
+    } catch (errorValue) {
+      if (errorValue instanceof DevnetPreflightError) throw errorValue;
+      throw new Error(classifyDevnetProviderError(errorValue));
+    }
     signature = typeof result === "string" ? result : result.signature;
     if (!signature) throw new Error("Wallet did not return a transaction signature.");
     if (actionButton) actionButton.textContent = "Waiting for finalized devnet state…";
@@ -1139,8 +1194,12 @@ async function connectWallet() {
     if (!key) throw new Error("The wallet did not return a public key.");
     state.wallet = provider;
     state.walletKey = new PublicKey(key.toString());
-    $("wallet-status").textContent = `Connected ${compactKey(state.walletKey.toBase58())}. The app sends transactions to Solana devnet.`;
+    state.walletNetwork = await readProviderNetwork(provider);
+    $("wallet-status").textContent = state.walletNetwork.status === "devnet"
+      ? "Connected " + compactKey(state.walletKey.toBase58()) + ". Phantom reports Solana Devnet."
+      : walletNetworkReason();
     $("connect-wallet").textContent = "Connected · change wallet";
+    renderWalletNetworkState();
     renderAuction();
     renderAuctionSetup();
     updateCreateEstimate();
@@ -1187,6 +1246,12 @@ async function claimTestAssets() {
   const button = $("get-test-assets");
   if (!state.walletKey) {
     status.textContent = "Connect a devnet wallet first.";
+    return;
+  }
+  try {
+    await requireConnectedDevnetWallet();
+  } catch (errorValue) {
+    status.textContent = errorValue instanceof Error ? errorValue.message : walletNetworkReason();
     return;
   }
   button.disabled = true;
@@ -1247,21 +1312,26 @@ function renderAuctionSetup() {
   const shareUrl = $("create-share-url");
   const status = $("create-status");
   if (!setup) {
-    if (createButton) createButton.disabled = !state.walletKey;
+    const creatorState = creatorWindowState({ walletKey: walletCanTransact(), setup: null });
+    if (createButton) {
+      createButton.disabled = creatorState.buttonDisabled;
+      createButton.textContent = creatorState.buttonText;
+    }
     if (finishButton) finishButton.hidden = true;
     if (share) share.hidden = true;
     if (shareUrl) shareUrl.textContent = "";
-    if (status && !state.walletKey) status.textContent = "Connect a devnet wallet to create a window account.";
+    if (status) status.textContent = walletCanTransact() ? creatorState.status : state.walletKey ? walletNetworkReason() : creatorState.status;
     return;
   }
   const ready = canShareSetup(setup);
+  const creatorState = creatorWindowState({ walletKey: walletCanTransact(), setup });
   if (createButton) {
-    createButton.disabled = true;
-    createButton.textContent = ready ? "Opening order finalized" : "Window account created";
+    createButton.disabled = creatorState.buttonDisabled;
+    createButton.textContent = creatorState.buttonText;
   }
   if (finishButton) {
     finishButton.hidden = ready;
-    finishButton.disabled = !state.walletKey || state.walletKey.toBase58() !== setup.creator;
+    finishButton.disabled = !walletCanTransact() || state.walletKey.toBase58() !== setup.creator;
   }
   if (share) {
     share.hidden = !ready;
@@ -1270,7 +1340,7 @@ function renderAuctionSetup() {
   if (shareUrl) shareUrl.textContent = ready ? sharedRoomUrl(window.location.origin, setup.auctionAddress) : "";
   if (status) {
     status.textContent = ready
-      ? "Opening order finalized. This window can be shared."
+      ? creatorState.status
       : "Auction account " + compactKey(setup.auctionAddress) + " is finalized. Finish the opening order before sharing.";
   }
   if ($("create-side")) $("create-side").value = setup.side === 0 ? "buy" : "sell";
@@ -1295,7 +1365,7 @@ async function updateCreateEstimate() {
     if (quantity > MAX_ORDER_BASE_UNITS) throw new RangeError("Opening quantity exceeds the 100-share program cap.");
     const requirement = orderRequirements({ side, quantityBaseUnits: quantity, limitPriceCents: limitCents });
     let solLine = "Devnet SOL rent and fees: unavailable until a wallet is connected.";
-    if (state.walletKey) {
+    if (walletCanTransact()) {
       const baseMint = new PublicKey(DEMO_BASE_MINT);
       const quoteMint = new PublicKey(DEMO_QUOTE_MINT);
       const ownerBase = getAssociatedTokenAddressSync(baseMint, state.walletKey, false, TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID);
@@ -1313,6 +1383,8 @@ async function updateCreateEstimate() {
       solLine = "Expected account rent ≈ " + (rent / LAMPORTS_PER_SOL).toFixed(6)
         + " SOL. Base network fees ≈ " + (baseFees / LAMPORTS_PER_SOL).toFixed(6)
         + " SOL for the create and opening-order transactions, before wallet-specific changes.";
+    } else if (state.walletKey) {
+      solLine = walletNetworkReason();
     }
     const tokenLine = side === 0
       ? "Opening buy needs " + formatQuoteUnits(requirement.quoteUnits) + " DEMO-USD at the limit."
@@ -1327,8 +1399,10 @@ async function createAuctionWindow(event) {
   event.preventDefault();
   const button = $("create-window");
   const status = $("create-status");
-  if (!state.walletKey) {
-    status.textContent = "Connect a devnet wallet before creating a window.";
+  try {
+    await requireConnectedDevnetWallet();
+  } catch (errorValue) {
+    status.textContent = errorValue instanceof Error ? errorValue.message : "Connect a devnet wallet before creating a window.";
     return;
   }
   if (state.setup && !canShareSetup(state.setup)) {
@@ -1390,7 +1464,13 @@ async function finishOpeningOrder() {
     status.textContent = "Create the auction account first.";
     return;
   }
-  if (!state.walletKey || state.walletKey.toBase58() !== setup.creator) {
+  try {
+    await requireConnectedDevnetWallet();
+  } catch (errorValue) {
+    status.textContent = errorValue instanceof Error ? errorValue.message : "Connect a devnet wallet first.";
+    return;
+  }
+  if (state.walletKey.toBase58() !== setup.creator) {
     status.textContent = "Reconnect the creator wallet to finish this opening order.";
     return;
   }

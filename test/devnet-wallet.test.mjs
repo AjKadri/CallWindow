@@ -1,0 +1,67 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import {
+  classifyDevnetSimulation,
+  DevnetPreflightError,
+  normalizeProviderNetwork,
+  readProviderNetwork,
+  requireDevnetNetwork,
+  signAfterDevnetPreflight,
+} from "../src/wallet/devnet.mjs";
+import { creatorWindowState } from "../src/auction/room.mjs";
+
+test("wallet network detection accepts reported devnet and rejects mainnet", async () => {
+  assert.equal(normalizeProviderNetwork("devnet"), "devnet");
+  assert.equal(normalizeProviderNetwork("mainnet-beta"), "mainnet-beta");
+  assert.equal((await readProviderNetwork({ network: "devnet" })).status, "devnet");
+  const wrong = requireDevnetNetwork(await readProviderNetwork({ network: "mainnet-beta" }));
+  assert.equal(wrong.ok, false);
+  assert.match(wrong.reason, /Switch Phantom to Solana Devnet/);
+});
+
+test("mocked Devnet provider unlocks the creator form", async () => {
+  const provider = { network: "devnet" };
+  const network = await readProviderNetwork(provider);
+  const form = creatorWindowState({ walletKey: requireDevnetNetwork(network).ok });
+  assert.equal(form.buttonText, "Create window account");
+  assert.equal(form.buttonDisabled, false);
+});
+
+test("unknown provider network fails closed with manual instructions", async () => {
+  const status = await readProviderNetwork({ request: async () => { throw new Error("unsupported"); } });
+  const requirement = requireDevnetNetwork(status);
+  assert.equal(status.status, "unknown");
+  assert.equal(requirement.ok, false);
+  assert.match(requirement.reason, /could not be verified/);
+});
+
+test("devnet preflight distinguishes insufficient rent from other failures", () => {
+  const insufficient = classifyDevnetSimulation({ err: { InstructionError: [0, "InsufficientFunds"] }, logs: ["insufficient funds for rent"] });
+  assert.match(insufficient, /not have enough devnet SOL/);
+  const other = classifyDevnetSimulation({ err: { InstructionError: [0, "Custom"] }, logs: ["custom program failure"] });
+  assert.match(other, /Devnet preflight failed before signing/);
+});
+
+test("failed devnet preflight never calls the wallet send method", async () => {
+  let sends = 0;
+  await assert.rejects(
+    signAfterDevnetPreflight({}, {
+      simulate: async () => ({ value: { err: { InstructionError: [0, "InsufficientFunds"] }, logs: ["insufficient funds for rent"] } }),
+      send: async () => { sends += 1; },
+    }),
+    (error) => error instanceof DevnetPreflightError && /not have enough devnet SOL/.test(error.message),
+  );
+  assert.equal(sends, 0);
+});
+
+test("successful devnet preflight reaches the mocked wallet send method", async () => {
+  let simulations = 0;
+  let sends = 0;
+  const result = await signAfterDevnetPreflight({}, {
+    simulate: async () => { simulations += 1; return { value: { err: null } }; },
+    send: async () => { sends += 1; return { signature: "devnet-signature" }; },
+  });
+  assert.equal(simulations, 1);
+  assert.equal(sends, 1);
+  assert.equal(result.signature, "devnet-signature");
+});

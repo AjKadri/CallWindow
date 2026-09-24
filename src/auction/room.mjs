@@ -109,6 +109,26 @@ export function canShareSetup(setup) {
   return Boolean(setup?.createSignature && setup?.openingSignature);
 }
 
+export function creatorWindowState({ walletKey, setup } = {}) {
+  if (!setup) {
+    return {
+      buttonText: walletKey ? "Create window account" : "Connect wallet to create window",
+      buttonDisabled: !walletKey,
+      status: walletKey
+        ? "Connected on devnet. Review the opening order requirements before creating the window account."
+        : "Connect a devnet wallet to create a window account.",
+    };
+  }
+  const ready = canShareSetup(setup);
+  return {
+    buttonText: ready ? "Opening order finalized" : "Window account created",
+    buttonDisabled: true,
+    status: ready
+      ? "Opening order finalized. This window can be shared."
+      : "The auction account is finalized. Finish the opening order before sharing.",
+  };
+}
+
 export function sharedRoomUrl(origin, auctionAddress) {
   return new URL(`/room/?auction=${encodeURIComponent(auctionAddress)}`, origin).toString();
 }
