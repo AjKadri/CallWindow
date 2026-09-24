@@ -212,7 +212,7 @@ function executeDeploy(authorityPath, programIdPath) {
     "--program-id", programIdPath,
     "--upgrade-authority", authorityPath,
     "--commitment", "finalized",
-    "--use-rpc",
+    "--use-tpu-client",
   ], { cwd: ROOT, stdio: "inherit" });
 }
 
