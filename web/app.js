@@ -558,9 +558,23 @@ function renderFundingAvailability() {
   if (!button || !status) return;
   const distributor = state.distributor;
   if (state.sharedAuction) {
-    button.disabled = true;
-    button.textContent = "Use wallet-funded test assets";
-    status.textContent = "Shared windows do not change the server distributor. Bring DEMO-EQUITY, DEMO-USD, and devnet SOL from a funded test wallet.";
+    const windowOpen = state.auction?.state === 0
+      && BigInt(Math.floor(Date.now() / 1000)) < state.auction.cutoffTime;
+    if (!windowOpen) {
+      button.disabled = true;
+      button.textContent = "Test assets unavailable";
+      status.textContent = "This shared window is no longer open for test-asset claims.";
+      return;
+    }
+    if (!distributor || distributor.status !== "available") {
+      button.disabled = true;
+      button.textContent = "Test assets unavailable";
+      status.textContent = distributor?.reason ?? "The shared test-asset distributor is unavailable.";
+      return;
+    }
+    button.disabled = false;
+    button.textContent = "Get test assets";
+    status.textContent = distributor.remainingClaims + " global distribution claim" + (distributor.remainingClaims === 1 ? "" : "s") + " remain. One claim per wallet across shared windows.";
     return;
   }
   if (!distributor || distributor.status !== "available") {
@@ -613,6 +627,16 @@ async function readDevnetReference() {
   }
 }
 
+async function readSharedDistributorStatus(address) {
+  try {
+    const query = new URLSearchParams({ auctionAddress: address });
+    const response = await fetch(`/api/auction-room/shared-status?${query}`, { cache: "no-store" });
+    return await response.json();
+  } catch {
+    return { status: "unavailable", reason: "The shared test-asset distributor status is unavailable." };
+  }
+}
+
 function setVerifiedDevnetState(auctionAddress) {
   state.devnet = {
     network: "devnet",
@@ -629,7 +653,7 @@ async function loadSharedAuction(address) {
   const result = await readDevnetReference();
   state.sharedAuction = true;
   state.liveRoom = { source: "shared", auctionAddress: address, status: "shared" };
-  state.distributor = result?.distributor ?? null;
+  state.distributor = null;
   state.proof = result?.status === "available" ? result.historicalProof : null;
   const account = await connection.getAccountInfo(new PublicKey(address), "finalized");
   if (!account) throw new Error("This shared window is not available on devnet.");
@@ -641,6 +665,7 @@ async function loadSharedAuction(address) {
   if (!validation.ok) throw new Error(validation.reason);
   setVerifiedDevnetState(address);
   state.auction = auction;
+  state.distributor = await readSharedDistributorStatus(address);
   renderFundingAvailability();
   renderProof();
   renderAuction();
@@ -1168,13 +1193,18 @@ async function claimTestAssets() {
   button.textContent = "Sending finalized distribution…";
   if ($("funding-link")) $("funding-link").hidden = true;
   try {
+    const payload = { wallet: state.walletKey.toBase58() };
+    if (state.sharedAuction) payload.auctionAddress = state.devnet?.auctionAddress;
     const response = await fetch("/api/auction-room/claim", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ wallet: state.walletKey.toBase58() }),
+      body: JSON.stringify(payload),
     });
     const result = await response.json();
-    if (!response.ok || result.status !== "available") throw new Error(result.reason ?? "Test-asset distribution was unavailable.");
+    if (!response.ok || result.status !== "available") {
+      if (result?.status === "unavailable" || result?.status === "limited") state.distributor = result;
+      throw new Error(result.reason ?? "Test-asset distribution was unavailable.");
+    }
     status.textContent = "Finalized test assets sent to this wallet.";
     if ($("funding-link")) {
       $("funding-link").href = result.explorerUrl;

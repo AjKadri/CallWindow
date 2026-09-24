@@ -8,6 +8,7 @@ import {
   AuctionRoomError,
   claimTestAssets,
   getDistributorStatus,
+  getSharedDistributorStatus,
   readLiveAuctionRoom,
 } from "./auction-room.mjs";
 
@@ -94,7 +95,7 @@ export function createCallWindowServer({ fetchImpl = fetch } = {}) {
     if (request.method === "POST" && url.pathname === "/api/auction-room/claim") {
       try {
         const body = await readRequestBody(request);
-        sendJson(response, 200, await claimTestAssets(body.wallet));
+        sendJson(response, 200, await claimTestAssets(body.wallet, body.auctionAddress ?? null));
       } catch (error) {
         const statusCode = error instanceof AuctionRoomError ? error.statusCode : 500;
         sendJson(response, statusCode, {
@@ -155,6 +156,10 @@ export function createCallWindowServer({ fetchImpl = fetch } = {}) {
           distributor: await getDistributorStatus(liveRoom),
           reason: "No tracked public devnet proof is available in this checkout yet.",
         });
+      return;
+    }
+    if (url.pathname === "/api/auction-room/shared-status") {
+      sendJson(response, 200, await getSharedDistributorStatus(url.searchParams.get("auctionAddress")));
       return;
     }
     await serveStatic(response, url.pathname);

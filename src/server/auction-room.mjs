@@ -16,6 +16,15 @@ import {
   getAssociatedTokenAddressSync,
   getMint,
 } from "@solana/spl-token";
+import {
+  DEMO_BASE_MINT as ROOM_DEMO_BASE_MINT,
+  DEMO_QUOTE_MINT as ROOM_DEMO_QUOTE_MINT,
+  DEVNET_PROGRAM_ID as ROOM_DEVNET_PROGRAM_ID,
+  MAX_CANDIDATE_TICKS,
+  MAX_ORDERS,
+  MAX_PRICE_CENTS,
+  MIN_CANDIDATE_TICKS,
+} from "../auction/room.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 export const DEVNET_RPC = process.env.CALLWINDOW_DEVNET_RPC ?? "https://api.devnet.solana.com";
@@ -31,8 +40,12 @@ export const DISTRIBUTION_LIMITS = Object.freeze({
   baseUnitsPerClaim: 1000,
   quoteUnitsPerClaim: 50_000_000,
 });
-const DEMO_BASE_MINT = "B6ZoEr92PB58bN1MgTXwjZHBUxCZ895ERVdhFJtSQFcP";
-const DEMO_QUOTE_MINT = "7gLQ8vdtYTxbHa4YK9gjjsVe49WiKeH6pi2pV8us8zd4";
+export const DEVNET_PROGRAM_ID = ROOM_DEVNET_PROGRAM_ID;
+export const DEMO_BASE_MINT = ROOM_DEMO_BASE_MINT;
+export const DEMO_QUOTE_MINT = ROOM_DEMO_QUOTE_MINT;
+export const MIN_DISTRIBUTOR_LAMPORTS = 5_000_000;
+const DEVNET_FAUCET_URL = "https://faucet.solana.com/";
+const AUCTION_HEADER_SIZE = 216;
 
 export class AuctionRoomError extends Error {
   constructor(message, statusCode = 400) {
@@ -104,15 +117,12 @@ export async function getDistributorStatus(
       solFaucetUrl: "https://faucet.solana.com/",
     };
   }
-  const ledger = await readJson(ledgerPath);
-  const claims = ledger?.auctionAddress === room.auctionAddress && Array.isArray(ledger.claims)
-    ? ledger.claims
-    : [];
+  const claims = normalizeClaims(await readJson(ledgerPath));
   const remainingClaims = Math.max(0, DISTRIBUTION_LIMITS.maxClaimsTotal - claims.length);
   if (remainingClaims === 0) {
     return {
       status: "unavailable",
-      reason: "The test-asset distribution cap for this window has been reached.",
+      reason: "The global test-asset distribution cap has been reached.",
       maxClaimsPerWallet: DISTRIBUTION_LIMITS.maxClaimsPerWallet,
       remainingClaims: 0,
       solFunding: "faucet",
@@ -130,20 +140,140 @@ export async function getDistributorStatus(
   };
 }
 
+export function normalizeClaims(ledger) {
+  if (!Array.isArray(ledger?.claims)) return [];
+  const legacyAuctionAddress = typeof ledger.auctionAddress === "string" ? ledger.auctionAddress : null;
+  return ledger.claims.map((claim) => ({
+    ...claim,
+    auctionAddress: claim?.auctionAddress ?? legacyAuctionAddress,
+  }));
+}
+
+export function globalDistributionDecision({ wallet, ledger, limits = DISTRIBUTION_LIMITS }) {
+  if (!wallet) return { allowed: false, status: "invalid", reason: "Connect a devnet wallet first." };
+  const claims = normalizeClaims(ledger);
+  if (claims.some((claim) => claim.wallet === wallet)) {
+    return { allowed: false, status: "limited", reason: "This wallet has already claimed test assets." };
+  }
+  if (claims.length >= limits.maxClaimsTotal) {
+    return { allowed: false, status: "limited", reason: "The global test-asset distribution cap has been reached." };
+  }
+  return { allowed: true, status: "available" };
+}
+
 export function distributionDecision({ room, wallet, ledger, limits = DISTRIBUTION_LIMITS, now = Date.now() }) {
   if (!room) return { allowed: false, status: "unavailable", reason: "No public Auction Room is open." };
   if (!wallet) return { allowed: false, status: "invalid", reason: "Connect a devnet wallet first." };
   if (room.cutoffTime && Date.parse(room.cutoffTime) <= now) {
     return { allowed: false, status: "unavailable", reason: "This window has passed its cutoff. Start the next window for fresh test assets." };
   }
-  const claims = Array.isArray(ledger?.claims) ? ledger.claims : [];
-  if (claims.some((claim) => claim.wallet === wallet)) {
-    return { allowed: false, status: "limited", reason: "This wallet has already claimed test assets for the current window." };
+  return globalDistributionDecision({ wallet, ledger, limits });
+}
+
+function readSharedAuctionHeader(data) {
+  if (!data || data.length < AUCTION_HEADER_SIZE) {
+    throw new AuctionRoomError("The shared auction account is incomplete.", 409);
   }
-  if (claims.length >= limits.maxClaimsTotal) {
-    return { allowed: false, status: "limited", reason: "The test-asset distribution cap for this window has been reached." };
+  const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
+  let offset = 8;
+  const readKey = () => {
+    const key = new PublicKey(data.slice(offset, offset + 32)).toBase58();
+    offset += 32;
+    return key;
+  };
+  const readU8 = () => data[offset++];
+  const readU16 = () => { const value = view.getUint16(offset, true); offset += 2; return value; };
+  const readU64 = () => { const value = view.getBigUint64(offset, true); offset += 8; return value; };
+  const readI64 = () => { const value = view.getBigInt64(offset, true); offset += 8; return value; };
+  const header = {
+    authority: readKey(),
+    baseMint: readKey(),
+    quoteMint: readKey(),
+    baseVault: readKey(),
+    quoteVault: readKey(),
+    auctionId: readU64(),
+    cutoffTime: readI64(),
+    abortAfter: readI64(),
+    openingReferenceCents: readU16(),
+    firstTickCents: readU16(),
+    candidateTickCount: readU8(),
+    orderCount: readU8(),
+    state: readU8(),
+    clearingPriceCents: readU16(),
+    matchedBase: readU64(),
+    claimedCount: readU8(),
+  };
+  readU8();
+  readU8();
+  header.orderStorageLength = view.getUint32(offset, true);
+  return header;
+}
+
+export function validateSharedAuctionRecord(
+  record,
+  { accountOwner, programId = DEVNET_PROGRAM_ID, now = Math.floor(Date.now() / 1000) } = {},
+) {
+  const errors = [];
+  if (accountOwner !== programId) errors.push("The shared auction account is not owned by the CallWindow devnet program.");
+  if (record?.baseMint !== DEMO_BASE_MINT || record?.quoteMint !== DEMO_QUOTE_MINT) {
+    errors.push("The shared auction does not use the exact DEMO-EQUITY and DEMO-USD devnet mints.");
   }
-  return { allowed: true, status: "available" };
+  if (!Number.isInteger(record?.firstTickCents) || !Number.isInteger(record?.candidateTickCount)) {
+    errors.push("The shared auction grid is unavailable.");
+  } else {
+    const lastTick = record.firstTickCents + record.candidateTickCount - 1;
+    if (record.candidateTickCount < MIN_CANDIDATE_TICKS || record.candidateTickCount > MAX_CANDIDATE_TICKS) {
+      errors.push("The shared auction exceeds the 101-tick program bound.");
+    }
+    if (record.firstTickCents < 1 || lastTick > MAX_PRICE_CENTS) {
+      errors.push("The shared auction price grid is outside the deployed program bounds.");
+    }
+    if (record.openingReferenceCents < record.firstTickCents || record.openingReferenceCents > lastTick) {
+      errors.push("The shared auction opening reference is outside the grid.");
+    }
+  }
+  if (!Number.isInteger(record?.orderCount) || record.orderCount < 0 || record.orderCount > MAX_ORDERS) {
+    errors.push("The shared auction exceeds the 32-order program bound.");
+  }
+  if (record?.orderStorageLength !== 32) errors.push("The shared auction order storage does not match the deployed bound.");
+  if (record?.state !== 0) errors.push("This shared window is no longer open for test-asset claims.");
+  if (typeof record?.cutoffTime !== "bigint" || record.cutoffTime <= BigInt(now)) {
+    errors.push("This shared window has passed its cutoff.");
+  }
+  return { ok: errors.length === 0, errors, reason: errors[0] ?? null };
+}
+
+export async function validateSharedAuctionForDistribution(
+  auctionAddress,
+  { connectionFactory = (rpc) => new Connection(rpc, "finalized"), now = Math.floor(Date.now() / 1000) } = {},
+) {
+  let publicKey;
+  try {
+    publicKey = new PublicKey(auctionAddress);
+  } catch {
+    throw new AuctionRoomError("The shared auction URL is invalid.", 409);
+  }
+  const connection = connectionFactory(DEVNET_RPC);
+  let account;
+  try {
+    account = await connection.getAccountInfo(publicKey, "finalized");
+  } catch (error) {
+    throw new AuctionRoomError("The shared auction state is currently unavailable on devnet.", 503);
+  }
+  if (!account) throw new AuctionRoomError("This shared window is not available on devnet.", 409);
+  let record;
+  try {
+    record = readSharedAuctionHeader(account.data);
+  } catch (error) {
+    if (error instanceof AuctionRoomError) throw error;
+    throw new AuctionRoomError("The shared auction account could not be decoded.", 409);
+  }
+  const validation = validateSharedAuctionRecord(record, {
+    accountOwner: account.owner.toBase58(),
+    now,
+  });
+  if (!validation.ok) throw new AuctionRoomError(validation.reason, 409);
+  return { auctionAddress: publicKey.toBase58(), connection, record };
 }
 
 async function loadAuthority(keyPath = DISTRIBUTOR_KEY_PATH) {
@@ -186,46 +316,123 @@ async function persistLedger(ledger) {
 
 let distributionQueue = Promise.resolve();
 
-export function claimTestAssets(walletAddress) {
-  const operation = distributionQueue.then(() => distributeTestAssets(walletAddress));
+export function claimTestAssets(walletAddress, auctionAddress = null) {
+  const operation = distributionQueue.then(() => distributeTestAssets(walletAddress, auctionAddress));
   distributionQueue = operation.catch(() => {});
   return operation;
 }
 
-async function distributeTestAssets(walletAddress) {
+export async function getSharedDistributorStatus(
+  auctionAddress,
+  {
+    keyPath = DISTRIBUTOR_KEY_PATH,
+    ledgerPath = DISTRIBUTION_STATE_PATH,
+    connectionFactory = (rpc) => new Connection(rpc, "finalized"),
+    now = Date.now(),
+  } = {},
+) {
+  if (!auctionAddress) return { status: "unavailable", reason: "A shared auction address is required." };
+  if (!existsSync(keyPath)) {
+    return { status: "unavailable", reason: "The test-asset distributor is not configured on this server.", solFunding: "faucet", solFaucetUrl: DEVNET_FAUCET_URL };
+  }
+  let target;
+  try {
+    target = await validateSharedAuctionForDistribution(auctionAddress, { connectionFactory, now: Math.floor(now / 1000) });
+  } catch (error) {
+    return {
+      status: "unavailable",
+      reason: error.message || "The shared auction state is currently unavailable on devnet.",
+      solFunding: "faucet",
+      solFaucetUrl: DEVNET_FAUCET_URL,
+    };
+  }
+  const claims = normalizeClaims(await readJson(ledgerPath));
+  const remainingClaims = Math.max(0, DISTRIBUTION_LIMITS.maxClaimsTotal - claims.length);
+  if (remainingClaims === 0) {
+    return {
+      status: "unavailable",
+      reason: "The global test-asset distribution cap has been reached.",
+      maxClaimsPerWallet: DISTRIBUTION_LIMITS.maxClaimsPerWallet,
+      remainingClaims: 0,
+      solFunding: "faucet",
+      solFaucetUrl: DEVNET_FAUCET_URL,
+    };
+  }
+  let authority;
+  try {
+    authority = await loadAuthority(keyPath);
+  } catch (error) {
+    return { status: "unavailable", reason: error.message, solFunding: "faucet", solFaucetUrl: DEVNET_FAUCET_URL };
+  }
+  const funding = await distributorFundingStatus(target.connection, authority);
+  if (!funding.available) return { status: "unavailable", reason: funding.reason, solFunding: "faucet", solFaucetUrl: DEVNET_FAUCET_URL };
+  return {
+    status: "available",
+    maxClaimsPerWallet: DISTRIBUTION_LIMITS.maxClaimsPerWallet,
+    remainingClaims,
+    baseUnitsPerClaim: DISTRIBUTION_LIMITS.baseUnitsPerClaim,
+    quoteUnitsPerClaim: DISTRIBUTION_LIMITS.quoteUnitsPerClaim,
+    solFunding: "faucet",
+    solFaucetUrl: DEVNET_FAUCET_URL,
+  };
+}
+
+async function distributorFundingStatus(connection, authority) {
+  let balance;
+  try {
+    balance = await connection.getBalance(authority.publicKey, "finalized");
+  } catch {
+    return { available: false, reason: "The test-asset distributor funding state is currently unavailable on devnet." };
+  }
+  if (balance < MIN_DISTRIBUTOR_LAMPORTS) {
+    return { available: false, reason: "The test-asset distributor is out of devnet SOL for account rent and fees." };
+  }
+  const baseMint = new PublicKey(DEMO_BASE_MINT);
+  const quoteMint = new PublicKey(DEMO_QUOTE_MINT);
+  try {
+    const [baseInfo, quoteInfo] = await Promise.all([
+      getMint(connection, baseMint, "finalized"),
+      getMint(connection, quoteMint, "finalized"),
+    ]);
+    if (
+      baseInfo.decimals !== 2
+      || quoteInfo.decimals !== 6
+      || baseInfo.mintAuthority?.toBase58() !== authority.publicKey.toBase58()
+      || quoteInfo.mintAuthority?.toBase58() !== authority.publicKey.toBase58()
+    ) {
+      return { available: false, reason: "The configured test mints do not match the distributor authority or decimals." };
+    }
+  } catch {
+    return { available: false, reason: "The configured test mints are currently unavailable on devnet." };
+  }
+  return { available: true };
+}
+
+async function distributeTestAssets(walletAddress, auctionAddress = null) {
   let wallet;
   try {
     wallet = new PublicKey(walletAddress);
   } catch {
     throw new AuctionRoomError("Provide a valid Solana wallet address.");
   }
-  const room = await readLiveAuctionRoom();
-  const storedLedger = (await readJson(DISTRIBUTION_STATE_PATH)) ?? { claims: [] };
-  const ledger = room && storedLedger.auctionAddress !== room.auctionAddress
-    ? { auctionAddress: room.auctionAddress, claims: [] }
-    : storedLedger;
-  const decision = distributionDecision({
-    room,
-    wallet: wallet.toBase58(),
-    ledger,
-  });
+  const shared = Boolean(auctionAddress);
+  const target = shared ? await validateSharedAuctionForDistribution(auctionAddress) : null;
+  const room = shared ? null : await readLiveAuctionRoom();
+  const storedLedger = (await readJson(DISTRIBUTION_STATE_PATH)) ?? { version: 1, claims: [] };
+  const ledger = { version: 1, claims: normalizeClaims(storedLedger) };
+  const decision = shared
+    ? globalDistributionDecision({ wallet: wallet.toBase58(), ledger })
+    : distributionDecision({ room, wallet: wallet.toBase58(), ledger });
   if (!decision.allowed) throw new AuctionRoomError(decision.reason, decision.status === "limited" ? 429 : 409);
   const authority = await loadAuthority();
-  if (room.distributorAuthority && room.distributorAuthority !== authority.publicKey.toBase58()) {
+  if (room?.distributorAuthority && room.distributorAuthority !== authority.publicKey.toBase58()) {
     throw new AuctionRoomError("The distributor authority does not match the active room.", 503);
   }
-  const connection = new Connection(DEVNET_RPC, "confirmed");
-  const baseMint = new PublicKey(room.mints.base.address);
-  const quoteMint = new PublicKey(room.mints.quote.address);
-  const [baseInfo, quoteInfo] = await Promise.all([getMint(connection, baseMint, "finalized"), getMint(connection, quoteMint, "finalized")]);
-  if (
-    baseInfo.decimals !== room.mints.base.decimals
-    || quoteInfo.decimals !== room.mints.quote.decimals
-    || baseInfo.mintAuthority?.toBase58() !== authority.publicKey.toBase58()
-    || quoteInfo.mintAuthority?.toBase58() !== authority.publicKey.toBase58()
-  ) {
-    throw new AuctionRoomError("The configured test mints do not match the distributor authority or decimals.", 503);
-  }
+  const connection = target?.connection ?? new Connection(DEVNET_RPC, "finalized");
+  const funding = await distributorFundingStatus(connection, authority);
+  if (!funding.available) throw new AuctionRoomError(funding.reason, 503);
+  const baseMint = new PublicKey(DEMO_BASE_MINT);
+  const quoteMint = new PublicKey(DEMO_QUOTE_MINT);
   const baseAta = getAssociatedTokenAddressSync(baseMint, wallet, false, TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID);
   const quoteAta = getAssociatedTokenAddressSync(quoteMint, wallet, false, TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID);
   const instructions = [];
@@ -248,12 +455,13 @@ async function distributeTestAssets(walletAddress) {
   const signature = await sendFinalized(connection, authority, instructions);
   const claim = {
     wallet: wallet.toBase58(),
+    auctionAddress: target?.auctionAddress ?? room.auctionAddress,
     claimedAt: new Date().toISOString(),
     signature,
     baseUnits: DISTRIBUTION_LIMITS.baseUnitsPerClaim,
     quoteUnits: DISTRIBUTION_LIMITS.quoteUnitsPerClaim,
   };
-  await persistLedger({ auctionAddress: room.auctionAddress, claims: [...ledger.claims, claim] });
+  await persistLedger({ version: 1, claims: [...ledger.claims, claim] });
   return {
     status: "available",
     wallet: wallet.toBase58(),
