@@ -59,6 +59,15 @@
         </div>
       </section>
 
+      <section class="proof-section proof-walkthrough-section">
+        <div class="page-heading">
+          <p class="section-kicker">Transaction walkthrough</p>
+          <h2>Follow the finalized path from funding to claim.</h2>
+          <p>The links below are a static replay of the tracked public proof file. They show finalized devnet transactions, with no simulated live progress.</p>
+        </div>
+        <div id="proof-walkthrough" class="proof-walkthrough"><p class="empty-state">Loading tracked proof references…</p></div>
+      </section>
+
       <section class="proof-section">
         <div class="page-heading">
           <p class="section-kicker">Reconciliation</p>
@@ -116,5 +125,6 @@ curl http://127.0.0.1:4174/api/devnet</code></pre>
       </footer>
     </main>
     <script type="module" src="/navigation.js"></script>
+    <script type="module" src="/proof/walkthrough.js"></script>
   </body>
 </html>

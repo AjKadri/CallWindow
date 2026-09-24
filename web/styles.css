@@ -123,6 +123,11 @@ select:focus, input:focus, button:focus-visible, a:focus-visible { outline: 3px 
 .quote-details dd { margin: 0; color: #344b40; text-align: right; }
 .quote-details code { font-size: 9px; }
 .quote-caveat { margin: 13px 0 0; color: #828d85; font-size: 10px; line-height: 1.5; }
+.field-help { margin: 0; color: #7c8880; font-size: 11px; line-height: 1.45; }
+.issuer-link { color: #3f765e; font-size: 11px; font-weight: 700; text-underline-offset: 3px; }
+.quote-limit-result { min-height: 43px; margin-top: 10px; border-top: 1px solid #e7ebe6; padding-top: 10px; }
+.quote-limit-result p { margin: 0; }
+.limit-result-message { color: #236b5e; font-size: 12px; font-weight: 700; line-height: 1.45; }
 
 .auction-section { padding: 72px 0 78px; background: var(--dark); color: #f4f7f3; }
 .section-heading-light .eyebrow { color: #95b9a2; }
@@ -367,6 +372,20 @@ body {
 .proof-list { display: flex; flex-wrap: wrap; gap: 8px 16px; }
 .proof-list a { color: #236b5e; font-size: 11px; text-underline-offset: 3px; }
 .proof-list span { color: #6b7975; font-size: 10px; }
+.proof-walkthrough { margin-top: 30px; }
+.walkthrough-note { margin: 0 0 14px; color: #6f7775; font-size: 12px; }
+.walkthrough-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
+.walkthrough-card { border: 1px solid var(--line); border-radius: 20px; padding: 25px; background: #fff; }
+.walkthrough-card.walkthrough-branch { background: #f8f4ff; }
+.walkthrough-card .section-kicker { margin-bottom: 10px; }
+.walkthrough-card h3 { margin-bottom: 10px; font-family: var(--serif); font-size: 27px; font-weight: 400; }
+.walkthrough-card > p:not(.section-kicker) { min-height: 48px; margin-bottom: 20px; color: #6f7775; font-size: 12px; line-height: 1.55; }
+.walkthrough-steps { display: grid; gap: 1px; border-top: 1px solid var(--line); }
+.walkthrough-step { display: grid; grid-template-columns: 33px minmax(0, 1fr); gap: 11px; padding: 14px 0; border-bottom: 1px solid var(--line); }
+.walkthrough-step:last-child { border-bottom: 0; }
+.walkthrough-number { color: #8a9791; font: 500 10px/1.5 "DM Mono", monospace; }
+.walkthrough-step h3 { margin: 0 0 4px; font-family: "DM Sans", sans-serif; font-size: 12px; font-weight: 700; letter-spacing: 0; }
+.walkthrough-step a { color: #236b5e; font-size: 11px; line-height: 1.4; text-underline-offset: 3px; overflow-wrap: anywhere; }
 
 .evidence-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin: 30px 0 18px; }
 .evidence-item { min-height: 125px; padding: 17px; border: 1px solid var(--line); border-radius: 17px; background: #fff; }
@@ -403,7 +422,7 @@ body {
   .hero { min-height: 640px; padding: 68px 22px 0; }
   .hero-visual { height: 290px; margin-top: 65px; }
   .hero-visual::before { width: 460px; }
-  .proof-strip, .market-grid, .auction-layout, .evidence-grid { grid-template-columns: 1fr; }
+  .proof-strip, .market-grid, .auction-layout, .evidence-grid, .walkthrough-grid { grid-template-columns: 1fr; }
   .proof-item { border-right: 0; border-bottom: 1px solid var(--line); }
   .proof-item:last-child { border-bottom: 0; }
   .market-section, .auction-section, .rules-section { padding: 86px 22px; }

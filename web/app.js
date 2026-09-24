@@ -1,4 +1,5 @@
 import { Buffer } from "buffer/";
+import { evaluateQuoteLimit } from "../src/quote/limit.mjs";
 
 globalThis.Buffer = Buffer;
 
@@ -24,6 +25,7 @@ const state = {
   market: null,
   selectedMarket: null,
   quote: null,
+  limitResult: null,
   proof: null,
   devnet: null,
   auction: null,
@@ -92,6 +94,7 @@ function renderMarketRecord() {
   $("market-time").dateTime = state.market.observedAt ?? "";
   $("market-issuer-link").href = record.issuerUrl;
   $("market-disclosure-link").href = record.issuerUrl;
+  $("quote-limit-issuer-link").href = record.issuerUrl;
   updateQuoteSizeControl();
 }
 
@@ -107,7 +110,9 @@ function setMarketUnavailable(message) {
   $("market-time").textContent = isoTime(state.market?.observedAt);
   $("market-issuer-link").removeAttribute("href");
   $("market-disclosure-link").removeAttribute("href");
+  $("quote-limit-issuer-link").removeAttribute("href");
   $("quote-form").querySelector("button").disabled = true;
+  resetLimitResult();
   setError($("market-error"), message);
 }
 
@@ -124,6 +129,7 @@ function selectMarket(symbol) {
   state.selectedMarket = record;
   $("market-selector").value = record.symbol;
   state.quote = null;
+  resetLimitResult();
   clearError($("market-error"));
   renderMarketRecord();
   renderQuote();
@@ -172,6 +178,7 @@ function renderQuote() {
     message.className = "empty-state";
     message.textContent = "Choose a direction and size to request a live read-only quote.";
     container.append(message);
+    renderLimitResult();
     return;
   }
   if (quote.status !== "available") {
@@ -190,6 +197,7 @@ function renderQuote() {
       ["Age", `${quoteAgeSeconds() ?? 0} seconds`],
       ["Source", quote.source ?? "Jupiter Swap API v2"],
     ]));
+    renderLimitResult();
     return;
   }
   const inputToken = mintName(quote.inputMint);
@@ -229,6 +237,43 @@ function renderQuote() {
     ["Source", `${quote.source} · no taker`],
   ]);
   container.append(heading, details);
+  renderLimitResult();
+}
+
+function resetLimitResult() {
+  state.limitResult = null;
+  renderLimitResult();
+}
+
+function renderLimitResult() {
+  const container = $("quote-limit-result");
+  if (!container) return;
+  container.replaceChildren();
+  const result = state.limitResult;
+  if (!result) {
+    const message = document.createElement("p");
+    message.className = "empty-state";
+    message.textContent = "Check a fresh quote to compare it with your per-token limit.";
+    container.append(message);
+    return;
+  }
+  const message = document.createElement("p");
+  message.className = result.status === "determined" ? "limit-result-message" : "empty-state";
+  message.textContent = result.status === "determined"
+    ? result.message
+    : result.reason === "limit"
+      ? "Enter a positive per-token limit to check it."
+      : "No limit determination: this quote is unavailable or stale.";
+  container.append(message);
+}
+
+function checkQuoteLimit() {
+  state.limitResult = evaluateQuoteLimit({
+    quote: state.quote,
+    side: $("quote-direction").value,
+    limit: $("quote-limit").value,
+  });
+  renderLimitResult();
 }
 
 function quoteDetails(rows) {
@@ -254,6 +299,10 @@ function updateQuoteSizeControl() {
   $("quote-amount").step = selling ? "0.000000001" : "0.01";
   $("quote-amount").min = selling ? "0.000000001" : "0.01";
   $("quote-amount").value = selling ? "1" : "100";
+  $("quote-limit-label").textContent = selling ? "Your minimum price per token" : "Your maximum price per token";
+  $("quote-limit-help").textContent = selling
+    ? "Compare the fresh indicative price with the minimum you would accept."
+    : "Compare the fresh indicative price with the maximum you would pay.";
 }
 
 async function checkQuote(event) {
@@ -271,6 +320,7 @@ async function checkQuote(event) {
     const response = await fetch(`/api/quote?${query}`, { cache: "no-store" });
     state.quote = await response.json();
     renderQuote();
+    checkQuoteLimit();
   } catch (errorValue) {
     state.quote = {
       status: "unavailable",
@@ -278,6 +328,7 @@ async function checkQuote(event) {
       reason: errorValue instanceof Error ? errorValue.message : "Quote request failed",
     };
     renderQuote();
+    checkQuoteLimit();
   } finally {
     button.disabled = false;
     button.textContent = "Check exact-mint quote";
@@ -876,6 +927,9 @@ async function copyMint() {
 $("market-search").addEventListener("input", filterMarketOptions);
 $("market-selector").addEventListener("change", (event) => selectMarket(event.target.value));
 $("quote-direction").addEventListener("change", updateQuoteSizeControl);
+$("quote-direction").addEventListener("change", resetLimitResult);
+$("quote-amount").addEventListener("input", resetLimitResult);
+$("quote-limit").addEventListener("input", resetLimitResult);
 $("quote-form").addEventListener("submit", checkQuote);
 $("copy-mint").addEventListener("click", copyMint);
 $("connect-wallet").addEventListener("click", connectWallet);
@@ -895,6 +949,7 @@ updateQuoteSizeControl();
 updateEscrowEstimate();
 setInterval(() => {
   if (state.quote) renderQuote();
+  if (state.limitResult) checkQuoteLimit();
   if (state.auction) renderAuction();
 }, 1_000);
 setInterval(loadAuction, 7_000);

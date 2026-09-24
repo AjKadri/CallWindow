@@ -94,11 +94,16 @@
               </select>
               <label id="quote-amount-label" for="quote-amount">USDC input size</label>
               <div class="amount-input-wrap"><input id="quote-amount" name="amount" type="number" min="0.01" step="0.01" value="100" required /><span id="quote-unit">USDC</span></div>
+              <label id="quote-limit-label" for="quote-limit">Your maximum price per token</label>
+              <div class="amount-input-wrap"><input id="quote-limit" name="limit" type="number" min="0.01" step="0.01" value="1000" required /><span>USD / token</span></div>
+              <p id="quote-limit-help" class="field-help">Compare the fresh indicative price with the maximum you would pay.</p>
+              <a id="quote-limit-issuer-link" class="issuer-link" href="https://prestocks.com/kalshi" target="_blank" rel="noreferrer">View verified official PreStocks page ↗</a>
               <button id="check-quote" class="button button-dark button-full" type="submit">Check exact-mint quote</button>
             </form>
             <div id="quote-result" class="quote-result" aria-live="polite" aria-atomic="true">
               <p class="empty-state">Choose a direction and size to request a live read-only quote.</p>
             </div>
+            <div id="quote-limit-result" class="quote-limit-result" aria-live="polite" aria-atomic="true"><p class="empty-state">Check a fresh quote to compare it with your per-token limit.</p></div>
             <p class="quote-caveat">Indicative only. A route quote does not establish fillability, eligibility, execution, or auction benefit. Changing this selection never changes the separate devnet auction mints.</p>
           </article>
         </div>
@@ -117,7 +122,7 @@
           <div class="asset-warning">
             <div class="asset-symbols" aria-hidden="true"><span>DE</span><span>DU</span></div>
             <div>
-              <strong>DEMO-EQUITY and DEMO-USD</strong>
+              <strong>Test-asset auction example</strong>
               <p>Plain test assets with no equity backing, no PreStocks asset or value, and no connection to the KALSHI market data above.</p>
             </div>
           </div>
