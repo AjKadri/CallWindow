@@ -113,11 +113,55 @@ export function classifyDevnetProviderError(error, { walletName = "Selected wall
   return message || `${walletName} did not complete the Solana Devnet request.`;
 }
 
+function requestDiagnostic(error) {
+  const cause = error?.cause;
+  return [
+    error?.name && `name=${error.name}`,
+    error?.code !== undefined && `code=${String(error.code)}`,
+    error?.status !== undefined && `status=${String(error.status)}`,
+    error?.statusCode !== undefined && `statusCode=${String(error.statusCode)}`,
+    error?.message && `message=${error.message}`,
+    cause?.name && `cause.name=${cause.name}`,
+    cause?.code !== undefined && `cause.code=${String(cause.code)}`,
+    cause?.message && `cause.message=${cause.message}`,
+  ].filter(Boolean).join("; ");
+}
+
+export function classifyDevnetRequestKind(error) {
+  const diagnostic = requestDiagnostic(error);
+  if (/ENOTFOUND|EAI_AGAIN|ERR_NAME_NOT_RESOLVED|DNS/i.test(diagnostic)) return "dns";
+  if (error?.status === 429 || error?.statusCode === 429 || error?.code === 429 || /429|too many requests|rate[- ]?limit|quota/i.test(diagnostic)) return "rate-limit";
+  if (/failed to fetch|fetch failed|networkerror|network request|ECONNRESET|ECONNREFUSED|ETIMEDOUT/i.test(diagnostic)) return "browser-network";
+  if ((typeof error?.code === "number" && error.code < 0) || /json[- ]?rpc|rpc.*reject|invalid request|invalid params|method not found|node is unhealthy|server error/i.test(diagnostic)) return "rpc-rejection";
+  return "unknown";
+}
+
+export function classifyDevnetRequestFailure(error) {
+  switch (classifyDevnetRequestKind(error)) {
+    case "dns":
+      return "CallWindow could not resolve the Solana Devnet RPC host from this browser. Check the browser network or DNS connection, then try again.";
+    case "rate-limit":
+      return "Solana Devnet RPC rate-limited the simulation. Wait a moment, then try again.";
+    case "browser-network":
+      return "CallWindow could not reach the Solana Devnet RPC from this browser. Check the browser network connection, then try again.";
+    case "rpc-rejection":
+      return "Solana Devnet RPC rejected the simulation request before execution. Refresh the window state, then try again.";
+    default:
+      return "Devnet simulation could not run before signing. Refresh the window state, then try again.";
+  }
+}
+
+function isRetryableDevnetRequest(error) {
+  const kind = classifyDevnetRequestKind(error);
+  return kind === "rate-limit" || kind === "browser-network";
+}
+
 export class DevnetPreflightError extends Error {
-  constructor(message, { details = "" } = {}) {
+  constructor(message, { details = "", retryable = false } = {}) {
     super(message);
     this.name = "DevnetPreflightError";
     this.details = details;
+    this.retryable = retryable;
   }
 }
 
@@ -133,10 +177,13 @@ export async function signAfterDevnetPreflight(transaction, { simulate, send }) 
     const logs = error?.logs ?? error?.data?.logs ?? [];
     if (logs.length || isBlockhashFailure(error) || /insufficient funds|insufficient lamports|rent[- ]exempt|rent exemption/i.test(error?.message ?? "")) {
       throw new DevnetPreflightError(classifyDevnetSimulation({ err: error?.message, logs }), {
-        details: simulationDiagnostic({ err: error?.message, logs }),
+        details: [simulationDiagnostic({ err: error?.message, logs }), requestDiagnostic(error)].filter(Boolean).join("; "),
       });
     }
-    throw new DevnetPreflightError("Devnet preflight could not run. Check the devnet RPC connection and try again.");
+    throw new DevnetPreflightError(classifyDevnetRequestFailure(error), {
+      details: requestDiagnostic(error),
+      retryable: isRetryableDevnetRequest(error),
+    });
   }
   if (simulation?.value?.err) {
     throw new DevnetPreflightError(classifyDevnetSimulation(simulation.value), {
@@ -161,7 +208,7 @@ export async function signAfterDevnetPreflightWithBlockhashRetry({
       const result = await signAfterDevnetPreflight(transaction, { simulate, send });
       return { result, transaction, latestBlockhash };
     } catch (error) {
-      if (!retried && error instanceof DevnetPreflightError && isBlockhashFailure(error)) {
+      if (!retried && error instanceof DevnetPreflightError && (isBlockhashFailure(error) || error.retryable)) {
         retried = true;
         onRetry?.(error);
         continue;

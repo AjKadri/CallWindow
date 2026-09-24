@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   classifyDevnetSimulation,
+  classifyDevnetRequestFailure,
+  classifyDevnetRequestKind,
   canSignDevnet,
   DevnetPreflightError,
   getInjectedWallets,
@@ -91,6 +93,47 @@ test("camel-case BlockhashNotFound is classified and retried once before signing
   assert.equal(simulations, 2);
   assert.equal(sends, 1);
   assert.equal(result.result.signature, "hash-2");
+});
+
+test("Devnet request failures stay distinct and preserve browser diagnostics", async () => {
+  const dns = Object.assign(new Error("getaddrinfo ENOTFOUND api.devnet.solana.com"), { code: "ENOTFOUND" });
+  const rateLimit = Object.assign(new Error("Too Many Requests"), { status: 429 });
+  const rpc = Object.assign(new Error("Invalid params"), { code: -32602 });
+  const browser = new TypeError("Failed to fetch");
+  assert.equal(classifyDevnetRequestKind(dns), "dns");
+  assert.equal(classifyDevnetRequestKind(rateLimit), "rate-limit");
+  assert.equal(classifyDevnetRequestKind(rpc), "rpc-rejection");
+  assert.equal(classifyDevnetRequestKind(browser), "browser-network");
+  assert.match(classifyDevnetRequestFailure(dns), /could not resolve/);
+  assert.match(classifyDevnetRequestFailure(rateLimit), /rate-limited/);
+  assert.match(classifyDevnetRequestFailure(rpc), /RPC rejected/);
+  assert.match(classifyDevnetRequestFailure(browser), /could not reach/);
+  await assert.rejects(
+    signAfterDevnetPreflight({}, { simulate: async () => { throw browser; }, send: async () => { assert.fail("send must not run"); } }),
+    (error) => error instanceof DevnetPreflightError
+      && /could not reach/.test(error.message)
+      && /name=TypeError; message=Failed to fetch/.test(error.details),
+  );
+});
+
+test("transient Devnet RPC failure retries once before signing", async () => {
+  let simulations = 0;
+  let hashCalls = 0;
+  let sends = 0;
+  const result = await signAfterDevnetPreflightWithBlockhashRetry({
+    getLatestBlockhash: async () => ({ blockhash: `retry-${++hashCalls}`, lastValidBlockHeight: hashCalls }),
+    buildTransaction: async (latest) => latest,
+    simulate: async () => {
+      simulations += 1;
+      if (simulations === 1) throw Object.assign(new Error("Too Many Requests"), { status: 429 });
+      return { value: { err: null } };
+    },
+    send: async () => { sends += 1; return { signature: "retry-signature" }; },
+  });
+  assert.equal(hashCalls, 2);
+  assert.equal(simulations, 2);
+  assert.equal(sends, 1);
+  assert.equal(result.result.signature, "retry-signature");
 });
 
 test("failed creator preflight leaves a visible retry state and never sends", async () => {

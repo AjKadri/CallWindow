@@ -1411,7 +1411,13 @@ async function submitAndFinalize(instructions, label, { button = null, reload = 
             throw new Error(classifyDevnetProviderError(errorValue, { walletName: state.walletName ?? "Selected wallet" }));
           }
         },
-        onRetry: () => progress("preparation", "Devnet rejected the blockhash before signing. Refreshing it before another simulation…", "Refreshing Devnet blockhash…"),
+        onRetry: (errorValue) => {
+          if (errorValue?.retryable) {
+            progress("preparation", "Devnet returned a temporary RPC error before signing. Retrying the simulation once…", "Retrying Devnet simulation…");
+            return;
+          }
+          progress("preparation", "Devnet rejected the blockhash before signing. Refreshing it before another simulation…", "Refreshing Devnet blockhash…");
+        },
       });
       result = preflight.result;
       latest = preflight.latestBlockhash;
