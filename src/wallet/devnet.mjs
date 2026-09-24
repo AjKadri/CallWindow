@@ -7,6 +7,25 @@ export function normalizeProviderNetwork(value) {
   return "unknown";
 }
 
+function providerFor(value) {
+  return value && typeof value === "object" ? value : null;
+}
+
+export function getInjectedWallets(windowObject = globalThis.window) {
+  const wallets = [];
+  const phantom = providerFor(windowObject?.phantom?.solana)
+    ?? (windowObject?.solana?.isPhantom ? providerFor(windowObject.solana) : null);
+  const solflare = providerFor(windowObject?.solflare?.solana ?? windowObject?.solflare)
+    ?? (windowObject?.solana?.isSolflare ? providerFor(windowObject.solana) : null);
+  if (typeof phantom?.connect === "function") wallets.push({ id: "phantom", name: "Phantom", provider: phantom });
+  if (typeof solflare?.connect === "function" && solflare !== phantom) wallets.push({ id: "solflare", name: "Solflare", provider: solflare });
+  return wallets;
+}
+
+export function canSignDevnet(provider) {
+  return typeof provider?.signTransaction === "function";
+}
+
 function networkValue(value) {
   if (typeof value === "string") return value;
   if (!value || typeof value !== "object") return null;
@@ -34,17 +53,19 @@ export async function readProviderNetwork(provider) {
   return { status: "unknown", reported: null };
 }
 
-export function requireDevnetNetwork(network) {
-  if (network?.status === "devnet") return { ok: true, reason: "" };
+export function requireDevnetNetwork(network, { walletName = "Selected wallet" } = {}) {
+  if (network?.status === "devnet") return { ok: true, verified: true, reason: "" };
   if (network?.status && network.status !== "unknown") {
     return {
       ok: false,
-      reason: "Phantom is connected to " + network.status + ". Switch Phantom to Solana Devnet, disconnect this site, then reconnect. CallWindow will not sign this transaction.",
+      verified: false,
+      reason: `${walletName} reports ${network.status}. Select Solana Devnet in ${walletName}, disconnect this site, then reconnect. CallWindow will not sign this transaction.`,
     };
   }
   return {
-    ok: false,
-    reason: "Phantom's selected Solana network could not be verified. Switch Phantom to Solana Devnet, disconnect this site, then reconnect. CallWindow will not sign until the provider reports Devnet.",
+    ok: true,
+    verified: false,
+    reason: `${walletName} did not report its selected Solana network. CallWindow will only simulate, submit, and confirm this transaction through Solana Devnet. Check that ${walletName} is set to Solana Devnet before signing.`,
   };
 }
 
@@ -59,12 +80,15 @@ export function classifyDevnetSimulation({ err, logs = [] } = {}) {
   return "Devnet preflight failed before signing" + (diagnostic ? ": " + diagnostic : ".");
 }
 
-export function classifyDevnetProviderError(error) {
+export function classifyDevnetProviderError(error, { walletName = "Selected wallet" } = {}) {
   const message = error instanceof Error ? error.message : String(error ?? "");
-  if (/network|cluster|mainnet|devnet/i.test(message)) {
-    return "Phantom did not sign the devnet transaction. Confirm Phantom is set to Solana Devnet, disconnect this site, reconnect, and try again.";
+  if (/insufficient funds|insufficient lamports|rent[- ]exempt|rent exemption|account.*rent/i.test(message)) {
+    return "Devnet submission failed because this wallet may not have enough devnet SOL for account rent and fees. Fund the wallet from the Solana devnet faucet, then try again.";
   }
-  return message || "Phantom did not sign the devnet transaction.";
+  if (/network|cluster|mainnet|devnet/i.test(message)) {
+    return `${walletName} did not complete the Solana Devnet request. Check its selected network and reconnect, then try again.`;
+  }
+  return message || `${walletName} did not complete the Solana Devnet request.`;
 }
 
 export class DevnetPreflightError extends Error {

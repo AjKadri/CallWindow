@@ -19,8 +19,9 @@ test("sell limits meet at equality and fail below the effective price", () => {
   assert.equal(evaluateQuoteLimit({ quote, side: "sell", limit: "100.01", now }).meets, false);
 });
 
-test("invalid limits make no determination", () => {
-  for (const limit of ["", "0", "-1", "not-a-number"]) {
+test("an optional blank limit stays unset and invalid values make no determination", () => {
+  assert.equal(evaluateQuoteLimit({ quote, side: "buy", limit: "", now }).reason, "limit-not-set");
+  for (const limit of ["0", "-1", "not-a-number"]) {
     assert.equal(evaluateQuoteLimit({ quote, side: "buy", limit, now }).status, "invalid");
   }
 });

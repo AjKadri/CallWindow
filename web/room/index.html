@@ -146,7 +146,12 @@
               <span class="read-only-tag read-only-devnet">No mainnet tx</span>
             </div>
             <p class="panel-copy">Connect a wallet on devnet. Every order, cancellation, close, claim, and refund transaction is signed by the wallet or is permissionless where the program allows it.</p>
-            <button id="connect-wallet" class="button button-dark button-full" type="button">Connect devnet wallet</button>
+            <div class="wallet-picker">
+              <label for="wallet-selector">Wallet</label>
+              <select id="wallet-selector" aria-describedby="wallet-choice-status"><option value="">Detecting installed wallets…</option></select>
+              <p id="wallet-choice-status" class="wallet-choice-status">Detecting Phantom and Solflare…</p>
+            </div>
+            <button id="connect-wallet" class="button button-dark button-full" type="button" disabled>Connect selected wallet</button>
             <p id="wallet-status" class="wallet-status">No wallet connected.</p>
             <p id="wallet-network-help" class="wallet-network-help" hidden></p>
             <div class="room-balances" aria-live="polite">

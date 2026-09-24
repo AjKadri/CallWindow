@@ -2,7 +2,9 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   classifyDevnetSimulation,
+  canSignDevnet,
   DevnetPreflightError,
+  getInjectedWallets,
   normalizeProviderNetwork,
   readProviderNetwork,
   requireDevnetNetwork,
@@ -14,9 +16,21 @@ test("wallet network detection accepts reported devnet and rejects mainnet", asy
   assert.equal(normalizeProviderNetwork("devnet"), "devnet");
   assert.equal(normalizeProviderNetwork("mainnet-beta"), "mainnet-beta");
   assert.equal((await readProviderNetwork({ network: "devnet" })).status, "devnet");
-  const wrong = requireDevnetNetwork(await readProviderNetwork({ network: "mainnet-beta" }));
+  const wrong = requireDevnetNetwork(await readProviderNetwork({ network: "mainnet-beta" }), { walletName: "Phantom" });
   assert.equal(wrong.ok, false);
-  assert.match(wrong.reason, /Switch Phantom to Solana Devnet/);
+  assert.match(wrong.reason, /Select Solana Devnet in Phantom/);
+});
+
+test("wallet selection names explicit Phantom and Solflare providers", () => {
+  const phantom = { isPhantom: true, connect() {}, signTransaction() {} };
+  const solflare = { isSolflare: true, connect() {}, signTransaction() {} };
+  const wallets = getInjectedWallets({ phantom: { solana: phantom }, solflare });
+  assert.deepEqual(wallets.map(({ id, name }) => ({ id, name })), [
+    { id: "phantom", name: "Phantom" },
+    { id: "solflare", name: "Solflare" },
+  ]);
+  assert.equal(canSignDevnet(wallets[0].provider), true);
+  assert.equal(getInjectedWallets({ solana: { connect() {} } }).length, 0);
 });
 
 test("mocked Devnet provider unlocks the creator form", async () => {
@@ -27,12 +41,13 @@ test("mocked Devnet provider unlocks the creator form", async () => {
   assert.equal(form.buttonDisabled, false);
 });
 
-test("unknown provider network fails closed with manual instructions", async () => {
+test("unknown provider network stays unreported with manual instructions", async () => {
   const status = await readProviderNetwork({ request: async () => { throw new Error("unsupported"); } });
-  const requirement = requireDevnetNetwork(status);
+  const requirement = requireDevnetNetwork(status, { walletName: "Solflare" });
   assert.equal(status.status, "unknown");
-  assert.equal(requirement.ok, false);
-  assert.match(requirement.reason, /could not be verified/);
+  assert.equal(requirement.ok, true);
+  assert.equal(requirement.verified, false);
+  assert.match(requirement.reason, /Solflare did not report/);
 });
 
 test("devnet preflight distinguishes insufficient rent from other failures", () => {

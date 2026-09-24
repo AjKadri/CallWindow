@@ -1,6 +1,9 @@
 export const MAX_QUOTE_AGE_SECONDS = 60;
 
 export function evaluateQuoteLimit({ quote, side, limit, now = Date.now() }) {
+  if (String(limit ?? "").trim() === "") {
+    return { status: "not-set", reason: "limit-not-set" };
+  }
   const numericLimit = Number(limit);
   if (!Number.isFinite(numericLimit) || numericLimit <= 0) {
     return { status: "invalid", reason: "limit" };

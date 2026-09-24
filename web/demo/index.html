@@ -86,18 +86,18 @@
               </div>
               <span class="read-only-tag">No signing</span>
             </div>
-            <p class="panel-copy">A fresh Jupiter quote for the selected exact mint and input size. The request has no wallet taker and cannot submit a swap.</p>
+            <p class="panel-copy">A fresh Jupiter quote for the selected exact mint and requested amount. The request has no wallet taker and cannot submit a swap.</p>
             <form id="quote-form" class="quote-form">
               <label for="quote-direction">Direction</label>
               <select id="quote-direction" name="side">
                 <option value="buy">Buy selected token with USDC</option>
                 <option value="sell">Sell selected token for USDC</option>
               </select>
-              <label id="quote-amount-label" for="quote-amount">USDC input size</label>
+              <label id="quote-amount-label" for="quote-amount">Amount to spend (USDC)</label>
               <div class="amount-input-wrap"><input id="quote-amount" name="amount" type="number" min="0.01" step="0.01" value="100" required /><span id="quote-unit">USDC</span></div>
-              <label id="quote-limit-label" for="quote-limit">Your maximum price per token</label>
-              <div class="amount-input-wrap"><input id="quote-limit" name="limit" type="number" min="0.01" step="0.01" value="1000" required /><span>USD / token</span></div>
-              <p id="quote-limit-help" class="field-help">Compare the fresh indicative price with the maximum you would pay.</p>
+              <label id="quote-limit-label" for="quote-limit">Maximum price per token (optional)</label>
+              <div class="amount-input-wrap"><input id="quote-limit" name="limit" type="number" min="0.01" step="0.01" placeholder="Optional" /><span>USD / token</span></div>
+              <p id="quote-limit-help" class="field-help">This is the price for one full token, separate from the total amount spent or sold.</p>
               <a id="quote-limit-issuer-link" class="issuer-link" href="https://prestocks.com/kalshi" target="_blank" rel="noreferrer">View verified official PreStocks page ↗</a>
               <button id="check-quote" class="button button-dark button-full" type="submit">Check exact-mint quote</button>
             </form>
@@ -166,8 +166,14 @@
                 <span class="read-only-tag read-only-devnet">Devnet only</span>
               </div>
               <p class="panel-copy">Connect a wallet on devnet. Your wallet reviews and signs each test transaction.</p>
-              <button id="connect-wallet" class="button button-outline button-full" type="button">Connect devnet wallet</button>
+              <div class="wallet-picker">
+                <label for="wallet-selector">Wallet</label>
+                <select id="wallet-selector" aria-describedby="wallet-choice-status"><option value="">Detecting installed wallets…</option></select>
+                <p id="wallet-choice-status" class="wallet-choice-status">Detecting Phantom and Solflare…</p>
+              </div>
+              <button id="connect-wallet" class="button button-outline button-full" type="button" disabled>Connect selected wallet</button>
               <p id="wallet-status" class="wallet-status">No wallet connected.</p>
+              <p id="wallet-network-help" class="wallet-network-help" hidden></p>
               <form id="order-form" class="order-form">
                 <label for="order-side">I want to</label>
                 <select id="order-side" name="side"><option value="buy">Buy DEMO-EQUITY with DEMO-USD</option><option value="sell">Sell DEMO-EQUITY for DEMO-USD</option></select>

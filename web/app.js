@@ -1,8 +1,11 @@
 import { Buffer } from "buffer/";
+import { quoteFormCopy, resolveMarketSelection } from "../src/market/chooser.mjs";
 import { evaluateQuoteLimit } from "../src/quote/limit.mjs";
 import {
+  canSignDevnet,
   classifyDevnetProviderError,
   DevnetPreflightError,
+  getInjectedWallets,
   readProviderNetwork,
   requireDevnetNetwork,
   signAfterDevnetPreflight,
@@ -71,6 +74,8 @@ const state = {
   walletBalances: null,
   wallet: null,
   walletKey: null,
+  walletId: null,
+  walletName: null,
   walletNetwork: { status: "unknown", reported: null },
   busy: false,
 };
@@ -167,10 +172,12 @@ function renderMarketRecord() {
   $("market-disclosure-link").href = record.issuerUrl;
   $("quote-limit-issuer-link").href = record.issuerUrl;
   updateQuoteSizeControl();
+  updateQuoteFormAvailability();
 }
 
 function setMarketUnavailable(message) {
   state.selectedMarket = null;
+  state.quote = null;
   $("market-name").textContent = "PreStocks records unavailable";
   $("market-description").textContent = "The official product list could not be verified.";
   $("market-symbol").textContent = "unavailable";
@@ -182,21 +189,79 @@ function setMarketUnavailable(message) {
   $("market-issuer-link").removeAttribute("href");
   $("market-disclosure-link").removeAttribute("href");
   $("quote-limit-issuer-link").removeAttribute("href");
-  $("quote-form").querySelector("button").disabled = true;
+  $("market-selection-note").textContent = "Verified products are unavailable until the official PreStocks record can be loaded.";
+  updateQuoteFormAvailability();
   resetLimitResult();
+  renderQuote();
   setError($("market-error"), message);
 }
 
+function setMarketSelectionUnavailable(message) {
+  state.selectedMarket = null;
+  state.quote = null;
+  $("market-name").textContent = "No verified product selected";
+  $("market-description").textContent = message;
+  $("market-symbol").textContent = "—";
+  $("mark-price").textContent = "unavailable";
+  $("token-price").textContent = "unavailable";
+  $("token-supply").textContent = "unavailable";
+  $("selected-mint").textContent = "unavailable";
+  $("market-time").textContent = isoTime(state.market?.observedAt);
+  $("market-issuer-link").removeAttribute("href");
+  $("market-disclosure-link").removeAttribute("href");
+  $("quote-limit-issuer-link").removeAttribute("href");
+  $("market-selection-note").textContent = message;
+  updateQuoteFormAvailability();
+  resetLimitResult();
+  renderQuote();
+}
+
+function updateQuoteFormAvailability() {
+  const button = $("check-quote");
+  if (button) button.disabled = !state.selectedMarket;
+}
+
 function filterMarketOptions() {
-  const search = $("market-search").value.trim().toLowerCase();
-  for (const option of $("market-selector").options) {
-    option.hidden = Boolean(search) && !option.textContent.toLowerCase().includes(search);
+  const selector = $("market-selector");
+  const search = $("market-search").value;
+  const products = state.market?.products ?? [];
+  const selection = resolveMarketSelection(products, {
+    search,
+    selectedSymbol: state.selectedMarket?.symbol
+      ?? (products.some((product) => product.symbol === KALSHI_SYMBOL) ? KALSHI_SYMBOL : null),
+  });
+  selector.replaceChildren();
+  if (selection.noResults) {
+    const option = document.createElement("option");
+    option.textContent = "No verified products match this search";
+    option.value = "";
+    option.disabled = true;
+    option.selected = true;
+    selector.append(option);
+    selector.disabled = true;
+    setMarketSelectionUnavailable(`No verified PreStocks products match “${search.trim()}”.`);
+    return;
   }
+  selector.disabled = false;
+  for (const product of selection.matches) {
+    const option = document.createElement("option");
+    option.value = product.symbol;
+    option.textContent = `${product.symbol} · ${product.name}`;
+    selector.append(option);
+  }
+  selector.value = selection.selectedSymbol;
+  $("market-selection-note").textContent = search.trim()
+    ? `${selection.matches.length} verified product${selection.matches.length === 1 ? "" : "s"} match this search.`
+    : "KALSHI is the default featured record from the bounded scan. This is not a liquidity ranking.";
+  if (state.selectedMarket?.symbol !== selection.selectedSymbol) selectMarket(selection.selectedSymbol);
 }
 
 function selectMarket(symbol) {
   const record = state.market?.products?.find((product) => product.symbol === symbol);
-  if (!record) return;
+  if (!record) {
+    setMarketSelectionUnavailable("Choose a verified PreStocks product to request a quote.");
+    return;
+  }
   state.selectedMarket = record;
   $("market-selector").value = record.symbol;
   state.quote = null;
@@ -217,15 +282,6 @@ async function loadMarket() {
       setMarketUnavailable(market.reason ?? "The official PreStocks records could not be loaded.");
       return;
     }
-    const selector = $("market-selector");
-    selector.replaceChildren();
-    for (const product of market.products) {
-      const option = document.createElement("option");
-      option.value = product.symbol;
-      option.textContent = `${product.symbol} · ${product.name}`;
-      selector.append(option);
-    }
-    selectMarket(market.products.some((product) => product.symbol === KALSHI_SYMBOL) ? KALSHI_SYMBOL : market.products[0].symbol);
     filterMarketOptions();
   } catch (errorValue) {
     state.market = { observedAt: new Date().toISOString() };
@@ -261,7 +317,7 @@ function renderQuote() {
     reason.textContent = quote.reason ?? "A route quote could not be obtained.";
     container.append(heading, reason, quoteDetails([
       ["Direction", quote.direction === "buy" ? `Buy ${quote.symbol ?? "selected token"} with USDC` : quote.direction === "sell" ? `Sell ${quote.symbol ?? "selected token"} for USDC` : "unavailable"],
-      ["Input size", `${quote.inputAmount || "unavailable"} ${quote.inputMint ? mintName(quote.inputMint) : ""}`.trim()],
+      [quote.direction === "sell" ? "Amount to sell" : "Amount to spend", `${quote.inputAmount || "unavailable"} ${quote.inputMint ? mintName(quote.inputMint) : ""}`.trim()],
       ["Exact mint", quote.mint ?? "unavailable"],
       ["Failure type", quote.failureType ?? "unavailable"],
       ["Observed", isoTime(quote.observedAt)],
@@ -291,9 +347,9 @@ function renderQuote() {
     : "not reported";
   const details = quoteDetails([
     ["Direction", quote.direction === "buy" ? `USDC into exact ${quote.symbol} mint` : `Exact ${quote.symbol} mint into USDC`],
-    ["Input size", `${quote.inputAmount} ${inputToken}`],
-    ["Output", `${quote.outputAmount} ${outputToken}`],
-    ["Effective price", `${formatDollars(quote.effectivePriceUsdPerToken)} per ${quote.symbol}`],
+    [quote.direction === "buy" ? "Amount to spend" : "Amount to sell", `${quote.inputAmount} ${inputToken}`],
+    ["Estimated output", `${quote.outputAmount} ${outputToken}`],
+    ["Effective price per token", `${formatDollars(quote.effectivePriceUsdPerToken)} per ${quote.symbol}`],
     ["Exact mint", quote.mint ?? "unavailable"],
     ["Route", quote.route ?? "not reported"],
     ["Total fee rate", feeRate],
@@ -324,7 +380,7 @@ function renderLimitResult() {
   if (!result) {
     const message = document.createElement("p");
     message.className = "empty-state";
-    message.textContent = "Check a fresh quote to compare it with your per-token limit.";
+    message.textContent = "Optional: set a per-token limit if you want a comparison.";
     container.append(message);
     return;
   }
@@ -334,6 +390,8 @@ function renderLimitResult() {
     ? result.message
     : result.reason === "limit"
       ? "Enter a positive per-token limit to check it."
+      : result.reason === "limit-not-set"
+        ? "No per-token limit set. The quote remains indicative."
       : "No limit determination: this quote is unavailable or stale.";
   container.append(message);
 }
@@ -365,15 +423,14 @@ function quoteDetails(rows) {
 function updateQuoteSizeControl() {
   const selling = $("quote-direction").value === "sell";
   const symbol = state.selectedMarket?.symbol ?? "selected token";
-  $("quote-amount-label").textContent = selling ? `${symbol} input size` : "USDC input size";
-  $("quote-unit").textContent = selling ? symbol : "USDC";
+  const copy = quoteFormCopy($("quote-direction").value, symbol);
+  $("quote-amount-label").textContent = copy.amountLabel;
+  $("quote-unit").textContent = copy.unit;
   $("quote-amount").step = selling ? "0.000000001" : "0.01";
   $("quote-amount").min = selling ? "0.000000001" : "0.01";
   $("quote-amount").value = selling ? "1" : "100";
-  $("quote-limit-label").textContent = selling ? "Your minimum price per token" : "Your maximum price per token";
-  $("quote-limit-help").textContent = selling
-    ? "Compare the fresh indicative price with the minimum you would accept."
-    : "Compare the fresh indicative price with the maximum you would pay.";
+  $("quote-limit-label").textContent = copy.limitLabel;
+  $("quote-limit-help").textContent = copy.limitHelp;
 }
 
 async function checkQuote(event) {
@@ -401,7 +458,7 @@ async function checkQuote(event) {
     renderQuote();
     checkQuoteLimit();
   } finally {
-    button.disabled = false;
+    button.disabled = !state.selectedMarket;
     button.textContent = "Check exact-mint quote";
   }
 }
@@ -561,22 +618,28 @@ function renderRoomCountdown() {
 }
 
 function walletCanTransact() {
-  return Boolean(state.walletKey && state.walletNetwork?.status === "devnet");
+  return Boolean(state.walletKey && requireDevnetNetwork(state.walletNetwork, { walletName: state.walletName ?? "Selected wallet" }).ok);
 }
 
 function walletNetworkReason() {
-  return requireDevnetNetwork(state.walletNetwork).reason;
+  return requireDevnetNetwork(state.walletNetwork, { walletName: state.walletName ?? "Selected wallet" }).reason;
 }
 
 function renderWalletNetworkState() {
   const help = $("wallet-network-help");
+  if (!state.walletKey) {
+    if (help) help.hidden = true;
+    return;
+  }
   if (state.walletNetwork?.status === "devnet") {
     if (help) help.hidden = true;
     return;
   }
   if (help) {
     help.hidden = false;
-    help.textContent = "In Phantom, open the network selector, choose Solana Devnet, disconnect this site, then reconnect. CallWindow will not sign a mainnet transaction.";
+    help.textContent = state.walletNetwork?.status === "unknown"
+      ? walletNetworkReason()
+      : `In ${state.walletName ?? "your wallet"}, select Solana Devnet, disconnect this site, then reconnect.`;
   }
   if ($("wallet-status") && state.walletKey) $("wallet-status").textContent = walletNetworkReason();
 }
@@ -586,8 +649,56 @@ async function requireConnectedDevnetWallet() {
   state.walletNetwork = await readProviderNetwork(state.wallet);
   renderWalletNetworkState();
   renderAuctionSetup();
-  const requirement = requireDevnetNetwork(state.walletNetwork);
+  const requirement = requireDevnetNetwork(state.walletNetwork, { walletName: state.walletName ?? "Selected wallet" });
   if (!requirement.ok) throw new Error(requirement.reason);
+}
+
+function renderWalletChoices() {
+  const selector = $("wallet-selector");
+  const status = $("wallet-choice-status");
+  const button = $("connect-wallet");
+  if (!selector) return;
+  const wallets = getInjectedWallets();
+  const selected = state.walletId;
+  selector.replaceChildren();
+  const placeholder = document.createElement("option");
+  placeholder.value = "";
+  placeholder.textContent = wallets.length ? "Choose a wallet" : "No Phantom or Solflare detected";
+  placeholder.disabled = true;
+  placeholder.selected = !selected;
+  selector.append(placeholder);
+  for (const wallet of wallets) {
+    const option = document.createElement("option");
+    option.value = wallet.id;
+    option.textContent = wallet.name + (canSignDevnet(wallet.provider) ? "" : " · Devnet signing unavailable");
+    option.disabled = !canSignDevnet(wallet.provider);
+    option.selected = selected === wallet.id;
+    selector.append(option);
+  }
+  selector.disabled = wallets.length === 0;
+  if (button) button.disabled = !selected || !wallets.some((wallet) => wallet.id === selected && canSignDevnet(wallet.provider));
+  if (status) {
+    status.textContent = state.walletKey && state.walletName
+      ? `${state.walletName} connected. It signs only the Devnet test transaction.`
+      : wallets.length
+        ? "Choose Phantom or Solflare. The selected wallet signs only the Devnet test transaction."
+      : "Install Phantom or Solflare to connect a wallet.";
+  }
+}
+
+function changeWalletChoice(event) {
+  const id = event.target.value;
+  state.wallet = null;
+  state.walletKey = null;
+  state.walletId = id || null;
+  state.walletName = null;
+  state.walletNetwork = { status: "unknown", reported: null };
+  $("wallet-status").textContent = id ? "Wallet selected. Connect it to continue." : "No wallet selected.";
+  renderWalletNetworkState();
+  renderWalletChoices();
+  renderAuction();
+  renderAuctionSetup();
+  updateCreateEstimate();
 }
 
 function renderFundingAvailability() {
@@ -598,7 +709,7 @@ function renderFundingAvailability() {
   const distributor = state.distributor;
   if (state.walletKey && !walletCanTransact()) {
     button.disabled = true;
-    button.textContent = "Switch Phantom to Devnet";
+    button.textContent = `Switch ${state.walletName ?? "wallet"} to Devnet`;
     status.textContent = walletNetworkReason();
     return;
   }
@@ -844,7 +955,7 @@ function renderAuction() {
   orderButton.disabled = !walletCanTransact() || !windowOpen;
   orderButton.textContent = !state.walletKey
     ? "Connect wallet to continue"
-    : !walletCanTransact() ? "Switch Phantom to Devnet"
+    : !walletCanTransact() ? `Switch ${state.walletName ?? "wallet"} to Devnet`
     : windowOpen ? "Review and submit devnet order" : "Order window is closed";
   updateEscrowEstimate();
 }
@@ -1145,11 +1256,25 @@ async function submitAndFinalize(instructions, label, { button = null, reload = 
     try {
       result = await signAfterDevnetPreflight(transaction, {
         simulate: (builtTransaction) => connection.simulateTransaction(builtTransaction),
-        send: (builtTransaction) => state.wallet.signAndSendTransaction(builtTransaction),
+        send: async (builtTransaction) => {
+          try {
+            const signedTransaction = await state.wallet.signTransaction(builtTransaction);
+            if (!signedTransaction || typeof signedTransaction.serialize !== "function") {
+              throw new Error(`${state.walletName ?? "Selected wallet"} did not return a signed Devnet transaction.`);
+            }
+            const sentSignature = await connection.sendRawTransaction(signedTransaction.serialize(), {
+              preflightCommitment: "confirmed",
+              maxRetries: 5,
+            });
+            return { signature: sentSignature };
+          } catch (errorValue) {
+            throw new Error(classifyDevnetProviderError(errorValue, { walletName: state.walletName ?? "Selected wallet" }));
+          }
+        },
       });
     } catch (errorValue) {
       if (errorValue instanceof DevnetPreflightError) throw errorValue;
-      throw new Error(classifyDevnetProviderError(errorValue));
+      throw new Error(classifyDevnetProviderError(errorValue, { walletName: state.walletName ?? "Selected wallet" }));
     }
     signature = typeof result === "string" ? result : result.signature;
     if (!signature) throw new Error("Wallet did not return a transaction signature.");
@@ -1183,22 +1308,30 @@ function rememberTransaction(label, signature) {
 }
 
 async function connectWallet() {
-  const provider = window.phantom?.solana ?? window.solana;
-  if (!provider?.connect) {
-    $("wallet-status").textContent = "No Solana wallet provider was found. Install or enable Phantom, then connect on devnet.";
+  const wallet = getInjectedWallets().find((candidate) => candidate.id === state.walletId);
+  if (!wallet) {
+    $("wallet-status").textContent = "Choose an installed Phantom or Solflare wallet first.";
+    renderWalletChoices();
+    return;
+  }
+  if (!canSignDevnet(wallet.provider)) {
+    $("wallet-status").textContent = `${wallet.name} does not expose signTransaction, so CallWindow cannot submit a Devnet-only transaction through it.`;
     return;
   }
   try {
-    const response = await provider.connect({ onlyIfTrusted: false });
-    const key = response?.publicKey ?? provider.publicKey;
+    const response = await wallet.provider.connect({ onlyIfTrusted: false });
+    const key = response?.publicKey ?? wallet.provider.publicKey;
     if (!key) throw new Error("The wallet did not return a public key.");
-    state.wallet = provider;
+    state.wallet = wallet.provider;
+    state.walletId = wallet.id;
+    state.walletName = wallet.name;
     state.walletKey = new PublicKey(key.toString());
-    state.walletNetwork = await readProviderNetwork(provider);
+    state.walletNetwork = await readProviderNetwork(wallet.provider);
     $("wallet-status").textContent = state.walletNetwork.status === "devnet"
-      ? "Connected " + compactKey(state.walletKey.toBase58()) + ". Phantom reports Solana Devnet."
+      ? `Connected ${compactKey(state.walletKey.toBase58())}. ${wallet.name} reports Solana Devnet.`
       : walletNetworkReason();
-    $("connect-wallet").textContent = "Connected · change wallet";
+    $("connect-wallet").textContent = `Connected · change ${wallet.name}`;
+    renderWalletChoices();
     renderWalletNetworkState();
     renderAuction();
     renderAuctionSetup();
@@ -1320,7 +1453,9 @@ function renderAuctionSetup() {
     if (finishButton) finishButton.hidden = true;
     if (share) share.hidden = true;
     if (shareUrl) shareUrl.textContent = "";
-    if (status) status.textContent = walletCanTransact() ? creatorState.status : state.walletKey ? walletNetworkReason() : creatorState.status;
+    if (status) status.textContent = walletCanTransact()
+      ? state.walletNetwork.status === "devnet" ? creatorState.status : walletNetworkReason()
+      : state.walletKey ? walletNetworkReason() : creatorState.status;
     return;
   }
   const ready = canShareSetup(setup);
@@ -1584,6 +1719,7 @@ if (!isRoomPage) {
   on("quote-form", "submit", checkQuote);
   on("copy-mint", "click", copyMint);
 }
+on("wallet-selector", "change", changeWalletChoice);
 on("connect-wallet", "click", connectWallet);
 on("get-test-assets", "click", claimTestAssets);
 on("create-window-form", "submit", createAuctionWindow);
@@ -1606,6 +1742,7 @@ if (!isRoomPage) {
   loadMarket();
   updateQuoteSizeControl();
 }
+renderWalletChoices();
 loadAuction();
 renderAuctionSetup();
 updateEscrowEstimate();
