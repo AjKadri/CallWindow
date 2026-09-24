@@ -321,7 +321,7 @@ function renderProof() {
   } catch {}
   if (!transactions.length) {
     const note = document.createElement("p");
-    note.textContent = "Proof links will appear after a devnet run is recorded.";
+    note.textContent = "Verified proof links are listed above. Wallet actions will add their finalized signatures here.";
     container.append(note);
     return;
   }
@@ -828,6 +828,18 @@ $("order-rows").addEventListener("click", orderRowAction);
 $("close-auction").addEventListener("click", closeAuction);
 $("abort-auction").addEventListener("click", abortAuction);
 window.addEventListener("focus", loadAuction);
+
+const menuButton = document.querySelector(".menu-button");
+const navigation = document.querySelector(".nav-pill");
+if (menuButton && navigation) {
+  menuButton.addEventListener("click", () => {
+    const open = navigation.classList.toggle("open");
+    menuButton.setAttribute("aria-expanded", String(open));
+  });
+  navigation.querySelectorAll("a").forEach((link) => {
+    link.addEventListener("click", () => navigation.classList.remove("open"));
+  });
+}
 
 loadMarket();
 loadAuction();

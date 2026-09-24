@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" role="img" aria-labelledby="title desc">
+  <title id="title">CallWindow symbol</title>
+  <desc id="desc">Four flowing bands meeting at the center.</desc>
+  <g fill="#151515">
+    <path d="M8 13h29c5 0 9 2 13 6 4-4 8-6 13-6h29v10H64c-4 0-8 2-14 8-6-6-10-8-14-8H8V13Z"/>
+    <path d="M8 29h29c5 0 9 2 13 6 4-4 8-6 13-6h29v10H64c-4 0-8 2-14 8-6-6-10-8-14-8H8V29Z"/>
+    <path d="M8 53h29c4 0 8-2 14-8 6 6 10 8 14 8h29v10H65c-5 0-9-2-15-8-6 6-10 8-15 8H8V53Z"/>
+    <path d="M8 69h29c4 0 8-2 14-8 6 6 10 8 14 8h29v10H64c-5 0-9-2-13-6-4 4-8 6-13 6H8V69Z"/>
+  </g>
+</svg>
