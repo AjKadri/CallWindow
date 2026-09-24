@@ -80,10 +80,20 @@ export function classifyDevnetSimulation({ err, logs = [] } = {}) {
   if (/insufficient funds|insufficient lamports|rent[- ]exempt|rent exemption|account.*rent/i.test(diagnostic)) {
     return "Devnet preflight failed because this wallet may not have enough devnet SOL for account rent and fees. Fund the wallet from the Solana devnet faucet, then try again.";
   }
-  if (/blockhash not found|block height exceeded|transaction expired/i.test(diagnostic)) {
+  if (isBlockhashFailure({ message: diagnostic })) {
     return "Devnet preflight became stale before signing. Try the action again.";
   }
   return "Devnet preflight failed before signing. Review the window state and try again.";
+}
+
+export function isBlockhashFailure(error) {
+  const message = error instanceof Error
+    ? error.message
+    : typeof error === "string"
+      ? error
+      : error?.message ?? JSON.stringify(error ?? "");
+  const details = error?.details ?? "";
+  return /blockhash[-_ ]?not[-_ ]?found/i.test(`${message} ${details}`);
 }
 
 export function isAuctionWindowFailure(error) {
@@ -121,7 +131,7 @@ export async function signAfterDevnetPreflight(transaction, { simulate, send }) 
     simulation = await simulate(transaction);
   } catch (error) {
     const logs = error?.logs ?? error?.data?.logs ?? [];
-    if (logs.length || /insufficient funds|insufficient lamports|rent[- ]exempt|rent exemption/i.test(error?.message ?? "")) {
+    if (logs.length || isBlockhashFailure(error) || /insufficient funds|insufficient lamports|rent[- ]exempt|rent exemption/i.test(error?.message ?? "")) {
       throw new DevnetPreflightError(classifyDevnetSimulation({ err: error?.message, logs }), {
         details: simulationDiagnostic({ err: error?.message, logs }),
       });
@@ -134,4 +144,29 @@ export async function signAfterDevnetPreflight(transaction, { simulate, send }) 
     });
   }
   return send(transaction);
+}
+
+export async function signAfterDevnetPreflightWithBlockhashRetry({
+  getLatestBlockhash,
+  buildTransaction,
+  simulate,
+  send,
+  onRetry,
+}) {
+  let retried = false;
+  while (true) {
+    const latestBlockhash = await getLatestBlockhash();
+    const transaction = await buildTransaction(latestBlockhash);
+    try {
+      const result = await signAfterDevnetPreflight(transaction, { simulate, send });
+      return { result, transaction, latestBlockhash };
+    } catch (error) {
+      if (!retried && error instanceof DevnetPreflightError && isBlockhashFailure(error)) {
+        retried = true;
+        onRetry?.(error);
+        continue;
+      }
+      throw error;
+    }
+  }
 }

@@ -5,11 +5,13 @@ import {
   canSignDevnet,
   DevnetPreflightError,
   getInjectedWallets,
+  isBlockhashFailure,
   isAuctionWindowFailure,
   normalizeProviderNetwork,
   readProviderNetwork,
   requireDevnetNetwork,
   signAfterDevnetPreflight,
+  signAfterDevnetPreflightWithBlockhashRetry,
 } from "../src/wallet/devnet.mjs";
 import { creatorWindowState } from "../src/auction/room.mjs";
 
@@ -66,6 +68,29 @@ test("AuctionNotOpen remains distinct from funding failures", () => {
   assert.match(message, /auction is no longer open/);
   assert.equal(isAuctionWindowFailure(Object.assign(new Error(message), { details: "custom program failure" })), true);
   assert.doesNotMatch(message, /raw|logs|custom program/);
+});
+
+test("camel-case BlockhashNotFound is classified and retried once before signing", async () => {
+  assert.equal(isBlockhashFailure("BlockhashNotFound"), true);
+  assert.match(classifyDevnetSimulation({ err: "BlockhashNotFound" }), /became stale/);
+  let hashCalls = 0;
+  let builds = 0;
+  let simulations = 0;
+  let sends = 0;
+  const result = await signAfterDevnetPreflightWithBlockhashRetry({
+    getLatestBlockhash: async () => ({ blockhash: `hash-${++hashCalls}`, lastValidBlockHeight: hashCalls }),
+    buildTransaction: async (latest) => ({ recentBlockhash: latest.blockhash, lastValidBlockHeight: latest.lastValidBlockHeight, build: ++builds }),
+    simulate: async (transaction) => {
+      simulations += 1;
+      return { value: { err: simulations === 1 ? "BlockhashNotFound" : null }, transaction };
+    },
+    send: async (transaction) => { sends += 1; return { signature: transaction.recentBlockhash }; },
+  });
+  assert.equal(hashCalls, 2);
+  assert.equal(builds, 2);
+  assert.equal(simulations, 2);
+  assert.equal(sends, 1);
+  assert.equal(result.result.signature, "hash-2");
 });
 
 test("failed creator preflight leaves a visible retry state and never sends", async () => {

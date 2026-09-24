@@ -7,6 +7,7 @@ import {
   DevnetPreflightError,
   getInjectedWallets,
   isAuctionWindowFailure,
+  signAfterDevnetPreflightWithBlockhashRetry,
   readProviderNetwork,
   requireDevnetNetwork,
   signAfterDevnetPreflight,
@@ -25,6 +26,7 @@ import {
 } from "../src/auction/creator.mjs";
 import {
   canShareSetup,
+  canEditOpeningOrder,
   creatorWindowState,
   DEMO_BASE_MINT,
   DEMO_QUOTE_MINT,
@@ -56,6 +58,7 @@ const {
 
 const KALSHI_SYMBOL = "KALSHI";
 const DEVNET_RPC = "https://api.devnet.solana.com";
+const DEVNET_TRANSACTION_COMMITMENT = "confirmed";
 const AUCTION_STATES = ["Open", "Closed · claims available", "Halted · refunds available", "Aborted · refunds available"];
 const ORDER_ACTIVE = 0;
 const ORDER_CANCELLED = 1;
@@ -1374,17 +1377,23 @@ async function submitAndFinalize(instructions, label, { button = null, reload = 
   let finalized = false;
   let signature;
   try {
-    progress("preparation", "Preparing the Devnet transaction…", "Preparing Devnet transaction…");
-    const latest = await connection.getLatestBlockhash("finalized");
-    const transaction = new Transaction().add(...instructions);
-    transaction.feePayer = state.walletKey;
-    transaction.recentBlockhash = latest.blockhash;
-    transaction.lastValidBlockHeight = latest.lastValidBlockHeight;
     let result;
+    let latest;
     try {
-      progress("simulation", "Checking the transaction against Solana Devnet…", "Checking Devnet simulation…");
-      result = await signAfterDevnetPreflight(transaction, {
-        simulate: (builtTransaction) => connection.simulateTransaction(builtTransaction),
+      progress("preparation", "Preparing the Devnet transaction…", "Preparing Devnet transaction…");
+      const preflight = await signAfterDevnetPreflightWithBlockhashRetry({
+        getLatestBlockhash: () => connection.getLatestBlockhash(DEVNET_TRANSACTION_COMMITMENT),
+        buildTransaction: (freshBlockhash) => {
+          const transaction = new Transaction().add(...instructions);
+          transaction.feePayer = state.walletKey;
+          transaction.recentBlockhash = freshBlockhash.blockhash;
+          transaction.lastValidBlockHeight = freshBlockhash.lastValidBlockHeight;
+          progress("simulation", "Checking the transaction against Solana Devnet…", "Checking Devnet simulation…");
+          return transaction;
+        },
+        simulate: (builtTransaction) => connection.simulateTransaction(builtTransaction, {
+          commitment: DEVNET_TRANSACTION_COMMITMENT,
+        }),
         send: async (builtTransaction) => {
           try {
             progress("signing", `Review and sign in ${state.walletName ?? "your wallet"}. This transaction is Devnet-only.`, `Review in ${state.walletName ?? "wallet"}…`);
@@ -1394,7 +1403,7 @@ async function submitAndFinalize(instructions, label, { button = null, reload = 
             }
             progress("submission", "Submitting the signed transaction to Solana Devnet…", "Submitting to Devnet…");
             const sentSignature = await connection.sendRawTransaction(signedTransaction.serialize(), {
-              preflightCommitment: "confirmed",
+              preflightCommitment: DEVNET_TRANSACTION_COMMITMENT,
               maxRetries: 5,
             });
             return { signature: sentSignature };
@@ -1402,7 +1411,10 @@ async function submitAndFinalize(instructions, label, { button = null, reload = 
             throw new Error(classifyDevnetProviderError(errorValue, { walletName: state.walletName ?? "Selected wallet" }));
           }
         },
+        onRetry: () => progress("preparation", "Devnet rejected the blockhash before signing. Refreshing it before another simulation…", "Refreshing Devnet blockhash…"),
       });
+      result = preflight.result;
+      latest = preflight.latestBlockhash;
     } catch (errorValue) {
       if (errorValue instanceof DevnetPreflightError) throw errorValue;
       throw new Error(classifyDevnetProviderError(errorValue, { walletName: state.walletName ?? "Selected wallet" }));
@@ -1715,6 +1727,7 @@ function renderAuctionSetup() {
   const discardButton = $("discard-creator-setup");
   const share = $("create-share-link");
   const shareUrl = $("create-share-url");
+  const setupSummary = $("creator-setup-summary");
   const status = $("create-status");
   if (!setup) {
     const creatorState = creatorWindowState({ walletKey: walletCanTransact(), setup: null, error: state.creatorError });
@@ -1727,14 +1740,17 @@ function renderAuctionSetup() {
     }
     if (finishButton) finishButton.hidden = true;
     if (discardButton) discardButton.hidden = true;
+    if (setupSummary) setupSummary.hidden = true;
     if (share) share.hidden = true;
     if (shareUrl) shareUrl.textContent = "";
+    renderCreatorReview(null);
     if (status) status.textContent = state.creatorError ?? state.creatorNotice ?? (walletCanTransact()
       ? state.walletNetwork.status === "devnet" ? creatorState.status : walletNetworkReason()
       : state.walletKey ? walletNetworkReason() : creatorState.status);
     return;
   }
   const ready = canShareSetup(setup);
+  const openingEditable = canEditOpeningOrder(setup);
   const creatorState = creatorWindowState({ walletKey: walletCanTransact(), setup });
   if (createButton) {
     createButton.disabled = creatorState.buttonDisabled;
@@ -1743,12 +1759,19 @@ function renderAuctionSetup() {
   if (finishButton) {
     finishButton.hidden = ready;
     const setupWindowClosed = state.auction
-      && (state.auction.state !== 0 || BigInt(Math.floor(Date.now() / 1_000)) >= state.auction.cutoffTime);
+      && (state.auction.state !== 0
+        || (typeof state.auction.cutoffTime === "bigint" && BigInt(Math.floor(Date.now() / 1_000)) >= state.auction.cutoffTime));
     finishButton.disabled = !walletCanTransact()
       || state.walletKey.toBase58() !== setup.creator
       || Boolean(setupWindowClosed);
   }
   if (discardButton) discardButton.hidden = ready;
+  if (setupSummary) {
+    setupSummary.hidden = false;
+    setupSummary.textContent = ready
+      ? `Resuming auction account ${compactKey(setup.auctionAddress)}. Orders close at ${formatDevnetCutoff(setup.cutoffTime)}. The cutoff is fixed on-chain from account creation.`
+      : `Resuming auction account ${compactKey(setup.auctionAddress)}. Orders close at ${formatDevnetCutoff(setup.cutoffTime)}. The cutoff is fixed on-chain from account creation; opening side, limit, and quantity remain editable until the opening order is funded.`;
+  }
   if (share) {
     share.hidden = !ready;
     share.href = sharedRoomUrl(window.location.origin, setup.auctionAddress);
@@ -1757,15 +1780,18 @@ function renderAuctionSetup() {
   if (status) {
     status.textContent = state.creatorError ?? state.creatorNotice ?? (ready
       ? creatorState.status
-      : "Auction account " + compactKey(setup.auctionAddress) + " is finalized. Finish the opening order before sharing.");
+      : "Auction account " + compactKey(setup.auctionAddress) + " is finalized. Review or edit the opening order, then fund it before sharing.");
   }
+  if (ready) renderCreatorReview(null);
+  else renderCreatorReview(openingOrderReview(setup, state.creatorFunding));
   if ($("create-side")) $("create-side").value = setup.side === 0 ? "buy" : "sell";
   if ($("create-limit")) $("create-limit").value = (setup.limitCents / 100).toFixed(2);
   if ($("create-quantity")) $("create-quantity").value = (Number(setup.quantityBaseUnits) / 100).toFixed(2);
   if ($("create-cutoff")) $("create-cutoff").value = String(setup.durationMinutes ?? Math.max(MIN_WINDOW_MINUTES, Math.round(Number(setup.durationSeconds) / 60)));
-  for (const id of ["create-side", "create-limit", "create-quantity", "create-cutoff"]) {
-    if ($(id)) $(id).disabled = true;
+  for (const id of ["create-side", "create-limit", "create-quantity"]) {
+    if ($(id)) $(id).disabled = !openingEditable;
   }
+  if ($("create-cutoff")) $("create-cutoff").disabled = true;
 }
 
 async function updateCreateEstimate() {
@@ -1827,6 +1853,44 @@ function creatorFailure(errorValue) {
   return message;
 }
 
+function readOpeningOrderValues() {
+  const side = $("create-side").value === "buy" ? 0 : 1;
+  const quantityBaseUnits = parseUnits($("create-quantity").value, 2);
+  const limitCents = Number(parseUnits($("create-limit").value, 2));
+  if (!quantityBaseUnits || quantityBaseUnits < 1n || quantityBaseUnits > MAX_ORDER_BASE_UNITS) {
+    throw new RangeError("Opening quantity must be between 0.01 and 100 shares.");
+  }
+  if (!Number.isInteger(limitCents) || limitCents < AUCTION_FIRST_TICK_CENTS || limitCents > AUCTION_FIRST_TICK_CENTS + AUCTION_TICK_COUNT - 1) {
+    throw new RangeError("Opening limit must stay inside the $19.50–$20.50 devnet grid.");
+  }
+  return { side, quantityBaseUnits, limitCents };
+}
+
+function syncCreatorOpeningSetup() {
+  const setup = state.setup;
+  if (!canEditOpeningOrder(setup)) return setup;
+  try {
+    const values = readOpeningOrderValues();
+    const next = {
+      ...setup,
+      side: values.side,
+      quantityBaseUnits: values.quantityBaseUnits.toString(),
+      limitCents: values.limitCents,
+    };
+    persistAuctionSetup(next);
+    state.creatorError = null;
+    state.creatorNotice = null;
+    state.creatorStage = null;
+    renderCreatorReview(openingOrderReview(next, state.creatorFunding));
+    return next;
+  } catch (errorValue) {
+    state.creatorStage = "validation";
+    state.creatorError = `Opening order validation failed: ${errorValue instanceof Error ? errorValue.message : String(errorValue)}`;
+    creatorStatus(state.creatorError, "error");
+    return null;
+  }
+}
+
 function creatorValidationMessage(field) {
   if (field.validity.valueMissing) return "enter a value.";
   if (field.validity.rangeUnderflow) return `use ${field.min} or more.`;
@@ -1845,14 +1909,14 @@ function handleCreatorInvalid(event) {
   creatorStatus(state.creatorError, "error");
 }
 
-function clearCreatorError() {
+function clearCreatorError({ render = true } = {}) {
   if (!state.creatorError && !state.creatorNotice) return;
   state.creatorError = null;
   state.creatorNotice = null;
   state.creatorDebug = "";
   state.creatorStage = null;
   renderCreatorDebug();
-  renderAuctionSetup();
+  if (render) renderAuctionSetup();
 }
 
 function discardCreatorSetup() {
@@ -1946,6 +2010,7 @@ async function createAuctionWindow(event) {
     state.creatorError = null;
     state.creatorStage = "finalization";
     await loadSharedAuction(setup.auctionAddress);
+    await refreshCreatorFunding("opening");
     renderAuctionSetup();
   } catch (errorValue) {
     creatorFailure(errorValue);
@@ -1959,7 +2024,7 @@ async function createAuctionWindow(event) {
 }
 
 async function finishOpeningOrder() {
-  const setup = state.setup ?? readAuctionSetup();
+  let setup = state.setup ?? readAuctionSetup();
   const status = $("create-status");
   const button = $("finish-opening-order");
   if (!setup) {
@@ -1976,6 +2041,9 @@ async function finishOpeningOrder() {
     status.textContent = "Reconnect the creator wallet to finish this opening order.";
     return;
   }
+  const syncedSetup = syncCreatorOpeningSetup();
+  if (!syncedSetup) return;
+  setup = syncedSetup;
   button.disabled = true;
   try {
     state.creatorError = null;
@@ -2033,7 +2101,8 @@ async function finishOpeningOrder() {
     status.textContent = state.creatorError;
   } finally {
     const windowClosed = state.auction
-      && (state.auction.state !== 0 || BigInt(Math.floor(Date.now() / 1_000)) >= state.auction.cutoffTime);
+      && (state.auction.state !== 0
+        || (typeof state.auction.cutoffTime === "bigint" && BigInt(Math.floor(Date.now() / 1_000)) >= state.auction.cutoffTime));
     button.disabled = Boolean(windowClosed) || !walletCanTransact() || state.walletKey?.toBase58() !== setup.creator;
   }
 }
@@ -2136,8 +2205,14 @@ on("discard-creator-setup", "click", discardCreatorSetup);
 const creatorForm = $("create-window-form");
 if (creatorForm) {
   creatorForm.addEventListener("invalid", handleCreatorInvalid, true);
-  creatorForm.addEventListener("input", clearCreatorError);
-  creatorForm.addEventListener("change", clearCreatorError);
+  const handleCreatorInput = (event) => {
+    clearCreatorError({ render: false });
+    if (["create-side", "create-limit", "create-quantity"].includes(event.target?.id)) {
+      syncCreatorOpeningSetup();
+    }
+  };
+  creatorForm.addEventListener("input", handleCreatorInput);
+  creatorForm.addEventListener("change", handleCreatorInput);
 }
 on("finish-opening-order", "click", finishOpeningOrder);
 on("create-side", "change", updateCreateEstimate);

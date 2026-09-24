@@ -4,6 +4,7 @@ import {
   DEMO_BASE_MINT,
   DEMO_QUOTE_MINT,
   DEVNET_PROGRAM_ID,
+  canEditOpeningOrder,
   canShareSetup,
   creatorWindowState,
   orderRequirements,
@@ -66,6 +67,12 @@ test("creator sharing is gated on both finalized signatures", () => {
   assert.equal(canShareSetup({ createSignature: "create" }), false);
   assert.equal(canShareSetup({ openingSignature: "open" }), false);
   assert.equal(canShareSetup({ createSignature: "create", openingSignature: "open" }), true);
+});
+
+test("fresh setup is created first, then only unsigned opening fields remain editable", () => {
+  assert.equal(canEditOpeningOrder(null), false);
+  assert.equal(canEditOpeningOrder({ createSignature: "create" }), true);
+  assert.equal(canEditOpeningOrder({ createSignature: "create", openingSignature: "open" }), false);
 });
 
 test("creator form changes from connect to create and preserves existing setup state", () => {

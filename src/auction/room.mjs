@@ -109,6 +109,10 @@ export function canShareSetup(setup) {
   return Boolean(setup?.createSignature && setup?.openingSignature);
 }
 
+export function canEditOpeningOrder(setup) {
+  return Boolean(setup?.createSignature && !setup?.openingSignature);
+}
+
 export function creatorWindowState({ walletKey, setup, error } = {}) {
   if (!setup) {
     const failure = typeof error === "string" && error.length > 0 ? error : null;
