@@ -11,16 +11,16 @@ import {
   Transaction,
   TransactionInstruction,
   LAMPORTS_PER_SOL,
-  sendAndConfirmTransaction,
 } from "@solana/web3.js";
 import {
   ASSOCIATED_TOKEN_PROGRAM_ID,
   TOKEN_PROGRAM_ID,
+  createAssociatedTokenAccountInstruction,
+  createMintToInstruction,
   createMint,
   getAccount,
   getAssociatedTokenAddressSync,
-  getOrCreateAssociatedTokenAccount,
-  mintTo,
+  getMint,
 } from "@solana/spl-token";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -64,10 +64,75 @@ const OPENING_REFERENCE_CENTS = 2_000;
 const CANDIDATE_TICK_COUNT = 101;
 const BASE_MINT_DECIMALS = 2;
 const QUOTE_MINT_DECIMALS = 6;
+const RESUMED_BASE_MINT = process.env.CALLWINDOW_BASE_MINT ?? null;
+const RESUMED_QUOTE_MINT = process.env.CALLWINDOW_QUOTE_MINT ?? null;
+const RESUMED_BASE_MINT_TRANSACTION = process.env.CALLWINDOW_BASE_MINT_TX ?? null;
+const RESUMED_QUOTE_MINT_TRANSACTION = process.env.CALLWINDOW_QUOTE_MINT_TX ?? null;
+const RESUMED_BASE_ATA_TRANSACTION = process.env.CALLWINDOW_BASE_ATA_TX ?? null;
+const DEPLOYMENT_TRANSACTION = process.env.CALLWINDOW_DEPLOYMENT_SIGNATURE ?? null;
 const ORDER_ACTIVE = 0;
 const ORDER_CANCELLED = 1;
 const AUCTION_CLOSED = 1;
-const connection = new Connection(CLUSTER_RPC, "finalized");
+const RPC_MIN_INTERVAL_MS = CLUSTER_NAME === "devnet"
+  ? Number(process.env.CALLWINDOW_RPC_MIN_INTERVAL_MS ?? 650)
+  : 0;
+const RPC_MAX_RETRIES = 3;
+if (!Number.isSafeInteger(RPC_MIN_INTERVAL_MS) || RPC_MIN_INTERVAL_MS < 0) {
+  throw new Error("CALLWINDOW_RPC_MIN_INTERVAL_MS must be a non-negative integer.");
+}
+
+let nextRpcRequestAt = 0;
+let rpcQueue = Promise.resolve();
+
+function sleep(milliseconds) {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+function retryAfterMilliseconds(response, fallbackMilliseconds) {
+  const header = response.headers.get("retry-after");
+  if (!header) return fallbackMilliseconds;
+  const seconds = Number(header);
+  if (Number.isFinite(seconds)) return Math.min(30_000, Math.max(250, seconds * 1_000));
+  const date = Date.parse(header);
+  if (Number.isFinite(date)) return Math.min(30_000, Math.max(250, date - Date.now()));
+  return fallbackMilliseconds;
+}
+
+async function pacedFetch(url, options) {
+  const run = async () => {
+    let lastError;
+    for (let attempt = 0; attempt <= RPC_MAX_RETRIES; attempt += 1) {
+      const waitMilliseconds = Math.max(0, nextRpcRequestAt - Date.now());
+      if (waitMilliseconds > 0) await sleep(waitMilliseconds);
+      try {
+        const response = await fetch(url, options);
+        if (response.status === 429 && attempt < RPC_MAX_RETRIES) {
+          const retryMilliseconds = retryAfterMilliseconds(response, 1_000 * (2 ** attempt));
+          await response.text();
+          nextRpcRequestAt = Date.now() + retryMilliseconds;
+          continue;
+        }
+        nextRpcRequestAt = Date.now() + RPC_MIN_INTERVAL_MS;
+        return response;
+      } catch (error) {
+        lastError = error;
+        if (attempt >= RPC_MAX_RETRIES) throw error;
+        const retryMilliseconds = 1_000 * (2 ** attempt);
+        nextRpcRequestAt = Date.now() + retryMilliseconds;
+      }
+    }
+    throw lastError ?? new Error("RPC request failed after bounded retries.");
+  };
+  const result = rpcQueue.then(run, run);
+  rpcQueue = result.catch(() => undefined);
+  return result;
+}
+
+const connection = new Connection(CLUSTER_RPC, {
+  commitment: "finalized",
+  fetch: pacedFetch,
+  disableRetryOnRateLimit: true,
+});
 
 function invariant(value, message) {
   if (!value) throw new Error(message);
@@ -283,11 +348,29 @@ async function instruction(programId, name, args, keys) {
 
 async function sendFinalized(payer, instructionList, signers = [payer]) {
   const tx = new Transaction().add(...instructionList);
-  const signature = await sendAndConfirmTransaction(connection, tx, signers, {
-    commitment: "finalized",
-    preflightCommitment: "confirmed",
-    maxRetries: 5,
-  });
+  tx.feePayer = payer.publicKey;
+  let signature;
+  let blockhash;
+  let lastValidBlockHeight;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    ({ blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash("confirmed"));
+    tx.recentBlockhash = blockhash;
+    tx.lastValidBlockHeight = lastValidBlockHeight;
+    tx.sign(...signers);
+    try {
+      signature = await connection.sendRawTransaction(tx.serialize(), {
+        preflightCommitment: "confirmed",
+        maxRetries: 5,
+      });
+      break;
+    } catch (error) {
+      if (attempt === 0 && String(error?.message ?? error).includes("Blockhash not found")) continue;
+      throw error;
+    }
+  }
+  invariant(signature, "The finalized transaction did not receive a signature.");
+  const confirmation = await connection.confirmTransaction({ signature, blockhash, lastValidBlockHeight }, "finalized");
+  invariant(!confirmation.value.err, `Transaction ${signature} did not reach successful finalized state`);
   let transaction;
   for (let attempt = 0; attempt < 8; attempt += 1) {
     transaction = await connection.getTransaction(signature, {
@@ -301,6 +384,9 @@ async function sendFinalized(payer, instructionList, signers = [payer]) {
   return {
     signature,
     status: "finalized",
+    explorerUrl: CLUSTER_NAME === "devnet"
+      ? `https://explorer.solana.com/tx/${signature}?cluster=devnet`
+      : null,
     feeLamports: transaction.meta.fee,
     computeUnitsConsumed: transaction.meta.computeUnitsConsumed ?? null,
   };
@@ -463,7 +549,61 @@ function decodeAuctionAccount(accountInfo, programId) {
 }
 
 async function ensureAta(payer, owner, mint) {
-  return getOrCreateAssociatedTokenAccount(connection, payer, mint, owner.publicKey);
+  const address = getAssociatedTokenAddressSync(mint, owner.publicKey);
+  const existing = await connection.getAccountInfo(address, "finalized");
+  if (!existing) {
+    const setupTx = await sendFinalized(payer, [createAssociatedTokenAccountInstruction(
+      payer.publicKey,
+      address,
+      owner.publicKey,
+      mint,
+      TOKEN_PROGRAM_ID,
+      ASSOCIATED_TOKEN_PROGRAM_ID,
+    )]);
+    return { address, setupTx };
+  }
+  const account = await getAccount(connection, address, "finalized");
+  invariant(account.mint.equals(mint) && account.owner.equals(owner.publicKey),
+    `Existing associated token account ${address.toBase58()} has the wrong owner or mint.`);
+  return { address, setupTx: null };
+}
+
+async function loadOrCreateMint(authority, decimals, providedAddress, label) {
+  if (!providedAddress) {
+    invariant(CLUSTER_NAME !== "devnet",
+      `Public devnet resume requires CALLWINDOW_${label.toUpperCase()}_MINT so the runner cannot create a duplicate mint.`);
+    return {
+      mint: await createMint(connection, authority, authority.publicKey, null, decimals),
+      created: true,
+      transaction: null,
+    };
+  }
+  const mint = new PublicKey(providedAddress);
+  const info = await getMint(connection, mint, "finalized");
+  invariant(info.decimals === decimals, `${label} mint ${mint.toBase58()} has ${info.decimals} decimals; expected ${decimals}.`);
+  invariant(info.mintAuthority?.equals(authority.publicKey), `${label} mint ${mint.toBase58()} is not controlled by the demo authority.`);
+  invariant(info.freezeAuthority === null, `${label} mint ${mint.toBase58()} unexpectedly has a freeze authority.`);
+  return { mint, created: false, transaction: null };
+}
+
+async function ensureMinted(authority, mint, destination, amount, label) {
+  const account = await getAccount(connection, destination, "finalized");
+  const currentAmount = account.amount;
+  const expectedAmount = BigInt(amount);
+  if (currentAmount === expectedAmount) return null;
+  invariant(currentAmount === 0n, `${label} already holds ${currentAmount} units; refusing to mint a duplicate amount.`);
+  return {
+    label,
+    wallet: "authority",
+    ...await sendFinalized(authority, [createMintToInstruction(
+      mint,
+      destination,
+      authority.publicKey,
+      amount,
+      [],
+      TOKEN_PROGRAM_ID,
+    )]),
+  };
 }
 
 function tokenDelta(before, after) {
@@ -500,8 +640,13 @@ async function main() {
   const authorityLamportsBeforeDeploy = await connection.getBalance(authority.publicKey, "finalized");
   const buyerLamportsBeforeRun = await connection.getBalance(buyer.publicKey, "finalized");
   const sellerLamportsBeforeRun = await connection.getBalance(seller.publicKey, "finalized");
-  console.log(`Deploying program ${programId.toBase58()} to ${CLUSTER_NAME}.`);
-  executeDeploy(path.join(KEY_DIR, "authority.json"), PROGRAM_ID_PATH);
+  const shouldDeploy = existingDeployment.mode === "fresh";
+  if (shouldDeploy) {
+    console.log(`Deploying program ${programId.toBase58()} to ${CLUSTER_NAME}.`);
+    executeDeploy(path.join(KEY_DIR, "authority.json"), PROGRAM_ID_PATH);
+  } else {
+    console.log(`Using the existing finalized ${CLUSTER_NAME} deployment ${programId.toBase58()} without redeploying.`);
+  }
   const authorityLamportsAfterDeploy = await connection.getBalance(authority.publicKey, "finalized");
   const programAccount = await connection.getAccountInfo(programId, "finalized");
   invariant(programAccount?.executable, `The ${CLUSTER_NAME} program account is not executable at finalized commitment.`);
@@ -518,14 +663,24 @@ async function main() {
   const deploymentFeeLamportsMeasured = deploymentCostLamports - deploymentPersistentRentIncreaseLamports;
   invariant(deploymentFeeLamportsMeasured >= 0, "Measured deployment cost did not cover incremental program account rent.");
 
-  const baseMint = await createMint(connection, authority, authority.publicKey, null, BASE_MINT_DECIMALS);
-  const quoteMint = await createMint(connection, authority, authority.publicKey, null, QUOTE_MINT_DECIMALS);
+  const baseMintRecord = await loadOrCreateMint(authority, BASE_MINT_DECIMALS, RESUMED_BASE_MINT, "base");
+  const quoteMintRecord = await loadOrCreateMint(authority, QUOTE_MINT_DECIMALS, RESUMED_QUOTE_MINT, "quote");
+  const baseMint = baseMintRecord.mint;
+  const quoteMint = quoteMintRecord.mint;
   const buyerBase = await ensureAta(authority, buyer, baseMint);
   const buyerQuote = await ensureAta(authority, buyer, quoteMint);
   const sellerBase = await ensureAta(authority, seller, baseMint);
   const sellerQuote = await ensureAta(authority, seller, quoteMint);
-  await mintTo(connection, authority, baseMint, sellerBase.address, authority, 100_000);
-  await mintTo(connection, authority, quoteMint, buyerQuote.address, authority, 2_000_000_000);
+  const setupTransactions = [
+    ...(buyerBase.setupTx ? [{ label: "Create buyer base ATA", wallet: "authority", ...buyerBase.setupTx }] : []),
+    ...(buyerQuote.setupTx ? [{ label: "Create buyer quote ATA", wallet: "authority", ...buyerQuote.setupTx }] : []),
+    ...(sellerBase.setupTx ? [{ label: "Create seller base ATA", wallet: "authority", ...sellerBase.setupTx }] : []),
+    ...(sellerQuote.setupTx ? [{ label: "Create seller quote ATA", wallet: "authority", ...sellerQuote.setupTx }] : []),
+  ];
+  const sellerBaseMintTx = await ensureMinted(authority, baseMint, sellerBase.address, 100_000, "Seller base mint");
+  const buyerQuoteMintTx = await ensureMinted(authority, quoteMint, buyerQuote.address, 2_000_000_000, "Buyer quote mint");
+  if (sellerBaseMintTx) setupTransactions.push(sellerBaseMintTx);
+  if (buyerQuoteMintTx) setupTransactions.push(buyerQuoteMintTx);
   const mintProof = {
     base: { name: "DEMO-EQUITY", address: baseMint.toBase58(), decimals: BASE_MINT_DECIMALS },
     quote: { name: "DEMO-USD", address: quoteMint.toBase58(), decimals: QUOTE_MINT_DECIMALS },
@@ -546,6 +701,7 @@ async function main() {
     programId, authority, baseMint, quoteMint, auctionId: BigInt(now) * 10n + 2n, cutoffTime,
   });
   const txs = [
+    ...setupTransactions,
     { label: "Create matched test auction", wallet: "authority", ...matched.createTx },
     { label: "Create no-cross refund auction", wallet: "authority", ...refund.createTx },
     { label: "Create 32-order maximum test auction", wallet: "authority", ...maximum.createTx },
@@ -779,6 +935,14 @@ async function main() {
     clusterRpc: CLUSTER_RPC,
     programId: programId.toBase58(),
     builtProgramBytes: programLength,
+    deployment: {
+      status: shouldDeploy ? "deployed" : "existing-finalized-deployment-reused",
+      signature: DEPLOYMENT_TRANSACTION,
+      explorerUrl: DEPLOYMENT_TRANSACTION && CLUSTER_NAME === "devnet"
+        ? `https://explorer.solana.com/tx/${DEPLOYMENT_TRANSACTION}?cluster=devnet`
+        : null,
+      programDataAddress: programDataAddress.toBase58(),
+    },
     fundingEstimate,
     authorityFundingTargetLamports,
     deploymentCostLamports,
@@ -798,6 +962,15 @@ async function main() {
     orderWindowSeconds: CUTOFF_SECONDS,
     cutoffTime: new Date(cutoffTime * 1_000).toISOString(),
     caps: { maxOrders: MAX_ORDERS, maxCandidateTicks: MAX_CANDIDATE_TICKS, priceTickCents: 1 },
+    resumedSetup: {
+      mode: baseMintRecord.created || quoteMintRecord.created ? "fresh-mints" : "existing-mints",
+      baseMintCreationSignature: RESUMED_BASE_MINT_TRANSACTION,
+      quoteMintCreationSignature: RESUMED_QUOTE_MINT_TRANSACTION,
+      existingBuyerBaseAtaSignature: RESUMED_BASE_ATA_TRANSACTION,
+      selectedBaseMint: baseMint.toBase58(),
+      selectedQuoteMint: quoteMint.toBase58(),
+      note: "Existing finalized mints and token accounts were reused; no duplicate mint or ATA was created for the selected pair.",
+    },
     mints: mintProof,
     matchedAuction: {
       address: matched.auction.toBase58(),
