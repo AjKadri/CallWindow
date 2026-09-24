@@ -30,7 +30,7 @@
         <p class="section-kicker">Verified public evidence</p>
         <h1>A bounded demo with a record you can inspect.</h1>
         <p>CallWindow’s public devnet evidence covers the deployed program, a completed three-wallet auction flow, bounded close cases, and final reconciliation. These records describe the test mechanism, not live-market execution quality.</p>
-        <div class="proof-status"><span class="status-dot">Public devnet proof verified</span><span>24 finalized transactions in the proof manifest</span></div>
+        <div class="proof-status"><span class="status-dot">Public devnet proof verified</span><span>24 finalized transactions in the tracked proof file</span></div>
       </section>
 
       <section class="proof-section">
@@ -50,7 +50,7 @@
         <div class="page-heading">
           <p class="section-kicker">Completed auction</p>
           <h2>Matched, no-cross, and maximum-bound closes are finalized.</h2>
-          <p>The run used separate authority, buyer, and seller wallets. The verified manifest records deposits, orders, closes, claims, refunds, fees, and final balances.</p>
+          <p>The run used separate authority, buyer, and seller wallets. The tracked public proof records the finalized closes, claims, refunds, fees, and final balance results.</p>
         </div>
         <div class="proof-link-grid">
           <article class="proof-card"><span class="proof-card-label">Matched close</span><strong>30,098 compute units</strong><p>Uniform-price matched auction. Finalized fee: 5,000 lamports.</p><a href="https://explorer.solana.com/tx/3tMh5qoya4y1JJZC8K85wZzHP12tok8T2CtjPbTHNe8L3cu6L68xD1vNohaq3AzoVZt7qdwzXekJVqbXsUPoBiFm?cluster=devnet" target="_blank" rel="noreferrer">Open Explorer transaction ↗</a></article>
@@ -77,15 +77,15 @@
         <div class="page-heading">
           <p class="section-kicker">Reproduce</p>
           <h2>Use the tracked README flow to rerun the checks.</h2>
-          <p>The commands below reproduce the bounded tests and resume the verified public devnet deployment with its finalized demo mints.</p>
+          <p>The commands below verify the bounded rules and build the production app. The Demo loads its historical proof from the tracked public file, then reads the current auction account from finalized devnet.</p>
         </div>
         <pre class="command-block"><code>npm test
 npm run bench:bounds
-CALLWINDOW_CLUSTER=devnet \
-CALLWINDOW_BASE_MINT=B6ZoEr92PB58bN1MgTXwjZHBUxCZ895ERVdhFJtSQFcP \
-CALLWINDOW_QUOTE_MINT=7gLQ8vdtYTxbHa4YK9gjjsVe49WiKeH6pi2pV8us8zd4 \
-CALLWINDOW_CUTOFF_SECONDS=240 npm run demo:devnet</code></pre>
-        <p class="section-caption">The ignored `target/devnet/manifest.json` contains the complete 24-signature proof record. Devnet runs stop if the dedicated wallets are underfunded and do not request SOL from the public faucet.</p>
+npm run build
+npm run server
+# In a second shell:
+curl http://127.0.0.1:4174/api/devnet</code></pre>
+        <p class="section-caption">The tracked `web/public/devnet-proof.json` contains only public proof references. `target/` is not required for the historical Demo reference. Current account state is unavailable when finalized devnet RPC cannot be reached.</p>
       </section>
 
       <section class="boundary-section">

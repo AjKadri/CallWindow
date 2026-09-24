@@ -28,13 +28,17 @@ function sendJson(response, statusCode, body) {
   response.end(JSON.stringify(body));
 }
 
-async function readDevnetManifest() {
-  const manifestPath = path.join(ROOT, "target", "devnet", "manifest.json");
-  try {
-    return JSON.parse(await readFile(manifestPath, "utf8"));
-  } catch {
-    return null;
+async function readPublicDevnetProof() {
+  const proofPaths = [
+    path.join(ROOT, "dist", "devnet-proof.json"),
+    path.join(ROOT, "web", "public", "devnet-proof.json"),
+  ];
+  for (const proofPath of proofPaths) {
+    try {
+      return JSON.parse(await readFile(proofPath, "utf8"));
+    } catch {}
   }
+  return null;
 }
 
 async function serveStatic(response, pathname) {
@@ -95,13 +99,24 @@ export function createCallWindowServer({ fetchImpl = fetch } = {}) {
       return;
     }
     if (url.pathname === "/api/devnet") {
-      const manifest = await readDevnetManifest();
-      sendJson(response, 200, manifest
-        ? { status: "available", network: "devnet", manifest }
+      const historicalProof = await readPublicDevnetProof();
+      sendJson(response, 200, historicalProof
+        ? {
+          status: "available",
+          network: "devnet",
+          historicalProof,
+          currentReference: {
+            network: historicalProof.network,
+            programId: historicalProof.program.address,
+            programDataAddress: historicalProof.program.programDataAddress,
+            auctionAddress: historicalProof.historicalAuction.address,
+            mints: historicalProof.historicalAuction.mints,
+          },
+        }
         : {
           status: "unavailable",
           network: "devnet",
-          reason: "No devnet demo manifest is deployed in this checkout yet.",
+          reason: "No tracked public devnet proof is available in this checkout yet.",
         });
       return;
     }

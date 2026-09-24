@@ -71,3 +71,19 @@ test("server validates the selected mint before requesting a Jupiter quote", asy
     assert.equal(requests.filter(({ url }) => url.href.startsWith(JUPITER_ORDER)).length, beforeInvalid);
   });
 });
+
+test("devnet API serves tracked historical proof separately from current state reference", async () => {
+  await withServer(async (origin) => {
+    const response = await fetch(`${origin}/api/devnet`);
+    const body = await response.json();
+    assert.equal(response.status, 200);
+    assert.equal(body.status, "available");
+    assert.equal(body.manifest, undefined);
+    assert.equal(body.historicalProof.network, "devnet");
+    assert.equal(body.historicalProof.historicalAuction.state, "closed and claimed");
+    assert.equal(body.historicalProof.transactions.length, 24);
+    assert.equal(body.currentReference.auctionAddress, body.historicalProof.historicalAuction.address);
+    assert.equal(body.currentReference.mints.base.name, "DEMO-EQUITY");
+    assert.equal(body.currentReference.mints.quote.name, "DEMO-USD");
+  });
+});

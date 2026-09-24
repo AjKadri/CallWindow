@@ -1,0 +1,248 @@
+{
+  "network": "devnet",
+  "program": {
+    "address": "GxX6X6zZSQSuxEoTHPwaAmKCcpGRVRiB6ERANHzS7Eq9",
+    "programDataAddress": "GJp3fePPNETLxt3QGn6uyeaziFZKJMWGAhqQFaDK6sG5",
+    "explorerUrl": "https://explorer.solana.com/address/GxX6X6zZSQSuxEoTHPwaAmKCcpGRVRiB6ERANHzS7Eq9?cluster=devnet"
+  },
+  "historicalAuction": {
+    "address": "2P7zsEgyyVwjyxZPydrXekZBPUWt2KcxqkbwnJti6ZfW",
+    "auctionId": "17902375180",
+    "cutoffTime": "2026-09-24T08:15:53.000Z",
+    "mints": {
+      "base": {
+        "name": "DEMO-EQUITY",
+        "address": "B6ZoEr92PB58bN1MgTXwjZHBUxCZ895ERVdhFJtSQFcP",
+        "decimals": 2
+      },
+      "quote": {
+        "name": "DEMO-USD",
+        "address": "7gLQ8vdtYTxbHa4YK9gjjsVe49WiKeH6pi2pV8us8zd4",
+        "decimals": 6
+      },
+      "disclosure": "Test demonstration mints with no equity backing and no connection to the PreStocks KALSHI mint."
+    },
+    "caps": {
+      "maxOrders": 32,
+      "maxCandidateTicks": 101,
+      "priceTickCents": 1
+    },
+    "state": "closed and claimed",
+    "results": {
+      "matched": {
+        "address": "2P7zsEgyyVwjyxZPydrXekZBPUWt2KcxqkbwnJti6ZfW",
+        "orderCount": 3,
+        "cancelRefundTested": true,
+        "clearingPriceCents": 2000,
+        "matchedBaseUnits": 300,
+        "state": "closed and claimed",
+        "close": {
+          "label": "Close matched auction at cutoff",
+          "signature": "3tMh5qoya4y1JJZC8K85wZzHP12tok8T2CtjPbTHNe8L3cu6L68xD1vNohaq3AzoVZt7qdwzXekJVqbXsUPoBiFm",
+          "status": "finalized",
+          "explorerUrl": "https://explorer.solana.com/tx/3tMh5qoya4y1JJZC8K85wZzHP12tok8T2CtjPbTHNe8L3cu6L68xD1vNohaq3AzoVZt7qdwzXekJVqbXsUPoBiFm?cluster=devnet"
+        }
+      },
+      "noCross": {
+        "address": "EcAzJmb4HssvDcKpJJ4YSxcztt6KxeKAgcioBsV49TN5",
+        "orderCount": 2,
+        "clearingPriceCents": 0,
+        "matchedBaseUnits": 0,
+        "state": "closed and fully refunded",
+        "close": {
+          "label": "Close no-cross auction at cutoff",
+          "signature": "2kfe5TFFi6ibjSr1KXqjZWijChi4iKXver9eWDdch8U6LPNvPZJLJGAStj7ApaJ1ZJBMQjF7B4HbqLFqxpSVMGhZ",
+          "status": "finalized",
+          "explorerUrl": "https://explorer.solana.com/tx/2kfe5TFFi6ibjSr1KXqjZWijChi4iKXver9eWDdch8U6LPNvPZJLJGAStj7ApaJ1ZJBMQjF7B4HbqLFqxpSVMGhZ?cluster=devnet"
+        }
+      },
+      "maximumBounds": {
+        "address": "zzm7ZEUMFwE8ix8ETkv82sJ87BqBWCS8cKP4aQFgMLC",
+        "orderCount": 32,
+        "candidateTickCount": 101,
+        "clearingPriceCents": 2000,
+        "matchedBaseUnits": 1600,
+        "state": "closed and claimed",
+        "close": {
+          "label": "Close maximum 32-order, 101-tick auction",
+          "signature": "3MfJ6HnuJdFFEELhRLXwKMEdkb3mJtCEMGaN94BMvcEFLsUJCbUpY3oPJGy1ND5acr8pCg8ye1NFNFiwZmoYLQEq",
+          "status": "finalized",
+          "explorerUrl": "https://explorer.solana.com/tx/3MfJ6HnuJdFFEELhRLXwKMEdkb3mJtCEMGaN94BMvcEFLsUJCbUpY3oPJGy1ND5acr8pCg8ye1NFNFiwZmoYLQEq?cluster=devnet"
+        }
+      }
+    }
+  },
+  "closingCost": {
+    "matched": {
+      "computeUnitsConsumed": 30098,
+      "feeLamports": 5000
+    },
+    "noCrossRefund": {
+      "computeUnitsConsumed": 27912,
+      "feeLamports": 5000
+    },
+    "maxBounds": {
+      "maxOrders": 32,
+      "candidateTicks": 101,
+      "computeUnitsConsumed": 88875,
+      "feeLamports": 5000
+    },
+    "highestObservedComputeUnits": 88875
+  },
+  "closingComputeUnits": 88875,
+  "reconciliation": {
+    "result": "all six demo vault balances must be zero after claims",
+    "matchedBaseVaultFinal": "0",
+    "matchedQuoteVaultFinal": "0",
+    "noCrossBaseVaultFinal": "0",
+    "noCrossQuoteVaultFinal": "0",
+    "maximumBaseVaultFinal": "0",
+    "maximumQuoteVaultFinal": "0"
+  },
+  "transactions": [
+    {
+      "label": "Create matched test auction",
+      "signature": "yZQqaY3LKhVmYX5LQjWPBiqH2FBojQB6dkndUMkeAek9Lr3UttVWuY7mcT5totT5ys7fX5zD2EXGz3m9jqh5mKk",
+      "status": "finalized",
+      "explorerUrl": "https://explorer.solana.com/tx/yZQqaY3LKhVmYX5LQjWPBiqH2FBojQB6dkndUMkeAek9Lr3UttVWuY7mcT5totT5ys7fX5zD2EXGz3m9jqh5mKk?cluster=devnet"
+    },
+    {
+      "label": "Create no-cross refund auction",
+      "signature": "3AiScfKJrfKrsmEsTWjLutMnH9UJrCKcj99BGD6ND73DRTvRWxsCs8YWSU7btRFLbjCqodjBdWeibLkET28Nh4Bm",
+      "status": "finalized",
+      "explorerUrl": "https://explorer.solana.com/tx/3AiScfKJrfKrsmEsTWjLutMnH9UJrCKcj99BGD6ND73DRTvRWxsCs8YWSU7btRFLbjCqodjBdWeibLkET28Nh4Bm?cluster=devnet"
+    },
+    {
+      "label": "Create 32-order maximum test auction",
+      "signature": "wFBY2ttrH6QmYRLv4LmRefivfzWPYv2FAhYwWDFV3SzBiWvf1eNfRzBsBXnfRx8VEN4Mp2B2euMHRAsCYfYRUt5",
+      "status": "finalized",
+      "explorerUrl": "https://explorer.solana.com/tx/wFBY2ttrH6QmYRLv4LmRefivfzWPYv2FAhYwWDFV3SzBiWvf1eNfRzBsBXnfRx8VEN4Mp2B2euMHRAsCYfYRUt5?cluster=devnet"
+    },
+    {
+      "label": "Place cancellable buy order",
+      "signature": "1mmwffNbVzW2eGLDViEX6528D32BbxdShbMWcoQCYsgoXw5QuB8fVP5pSaCdoAkTnbQFBhqE3RYmBENRZXsCssR",
+      "status": "finalized",
+      "explorerUrl": "https://explorer.solana.com/tx/1mmwffNbVzW2eGLDViEX6528D32BbxdShbMWcoQCYsgoXw5QuB8fVP5pSaCdoAkTnbQFBhqE3RYmBENRZXsCssR?cluster=devnet"
+    },
+    {
+      "label": "Cancel and fully refund test order",
+      "signature": "1okCZKVgoqfzSV3FMiqf3vurXnBKGQYxGvEPMUftqDkpdnqfoUVfSmRr8ykSZgUT3Nvn9ZQ2Ks9gKmgKqQM2iA",
+      "status": "finalized",
+      "explorerUrl": "https://explorer.solana.com/tx/1okCZKVgoqfzSV3FMiqf3vurXnBKGQYxGvEPMUftqDkpdnqfoUVfSmRr8ykSZgUT3Nvn9ZQ2Ks9gKmgKqQM2iA?cluster=devnet"
+    },
+    {
+      "label": "Place funded matched buy order",
+      "signature": "4k5ocBmPwd1pp8N2Dm2sxd5RsZ68bK8HvDUdBDpZsUeh6XY9Bfi5UuKmJ43R7mBfAxt2HH1sWpgkpxnXChSufFtp",
+      "status": "finalized",
+      "explorerUrl": "https://explorer.solana.com/tx/4k5ocBmPwd1pp8N2Dm2sxd5RsZ68bK8HvDUdBDpZsUeh6XY9Bfi5UuKmJ43R7mBfAxt2HH1sWpgkpxnXChSufFtp?cluster=devnet"
+    },
+    {
+      "label": "Place funded matched sell order",
+      "signature": "22pfeis7VyWByFoYwK2vkc4M7d97a9fsisPnsoANnAHCJw4vuCy6qS2pw9VdAzttEjGVDvzKtAsmAtbUCF5rzhXX",
+      "status": "finalized",
+      "explorerUrl": "https://explorer.solana.com/tx/22pfeis7VyWByFoYwK2vkc4M7d97a9fsisPnsoANnAHCJw4vuCy6qS2pw9VdAzttEjGVDvzKtAsmAtbUCF5rzhXX?cluster=devnet"
+    },
+    {
+      "label": "Place no-cross buy order",
+      "signature": "3sNyYRoBDPx3aNVnkmmaAsTwGoBGZSNBUasLf5knmV42caZcyBLv9o2qfy2bm3Jf7iqjRP6EQBgKT8o1FUNoaR8r",
+      "status": "finalized",
+      "explorerUrl": "https://explorer.solana.com/tx/3sNyYRoBDPx3aNVnkmmaAsTwGoBGZSNBUasLf5knmV42caZcyBLv9o2qfy2bm3Jf7iqjRP6EQBgKT8o1FUNoaR8r?cluster=devnet"
+    },
+    {
+      "label": "Place no-cross sell order",
+      "signature": "4xBQNTLsXcQvUzHmxqi7gymBqiRNUfNb5KYm2xjuStiPSDsdJ3bSX5x6do4ZnhAsveLGhC3ApgsiCEmqzndGoFtW",
+      "status": "finalized",
+      "explorerUrl": "https://explorer.solana.com/tx/4xBQNTLsXcQvUzHmxqi7gymBqiRNUfNb5KYm2xjuStiPSDsdJ3bSX5x6do4ZnhAsveLGhC3ApgsiCEmqzndGoFtW?cluster=devnet"
+    },
+    {
+      "label": "Place maximum test buy orders 1–8",
+      "signature": "3T8BcAEd7DcdBzrvj7NphtkXGsLHadvKqcPScRHgmz7ov6JhkRmchk9za85EjUgzHQEwNF6RE8Qqm2eFPcbQSF49",
+      "status": "finalized",
+      "explorerUrl": "https://explorer.solana.com/tx/3T8BcAEd7DcdBzrvj7NphtkXGsLHadvKqcPScRHgmz7ov6JhkRmchk9za85EjUgzHQEwNF6RE8Qqm2eFPcbQSF49?cluster=devnet"
+    },
+    {
+      "label": "Place maximum test buy orders 9–16",
+      "signature": "67iDQ6UH52dexJ9EdKMnGmsVxC9QFRPvoicMJDHWhmav8RNDuey9EuUbBNCiKGGmmLb18Y49dZjHEGyGiFw4b1u1",
+      "status": "finalized",
+      "explorerUrl": "https://explorer.solana.com/tx/67iDQ6UH52dexJ9EdKMnGmsVxC9QFRPvoicMJDHWhmav8RNDuey9EuUbBNCiKGGmmLb18Y49dZjHEGyGiFw4b1u1?cluster=devnet"
+    },
+    {
+      "label": "Place maximum test sell orders 1–8",
+      "signature": "2kEE3NtyFLfXjcXg22RPreBL5NPzmNpdhHs5JcpYj6RMEhzAN6GxWUYiQzWyLKTJXzScVbEeNtv7VnCNCNjQXKLR",
+      "status": "finalized",
+      "explorerUrl": "https://explorer.solana.com/tx/2kEE3NtyFLfXjcXg22RPreBL5NPzmNpdhHs5JcpYj6RMEhzAN6GxWUYiQzWyLKTJXzScVbEeNtv7VnCNCNjQXKLR?cluster=devnet"
+    },
+    {
+      "label": "Place maximum test sell orders 9–16",
+      "signature": "5et3Hyoe9iwvAwsmcTSryZu6nS3naqkuZ1ULFFNSxdsSWCX2jnf7rJXXsnMhyjg43nwLRAjoLYUToibY8weJHVe9",
+      "status": "finalized",
+      "explorerUrl": "https://explorer.solana.com/tx/5et3Hyoe9iwvAwsmcTSryZu6nS3naqkuZ1ULFFNSxdsSWCX2jnf7rJXXsnMhyjg43nwLRAjoLYUToibY8weJHVe9?cluster=devnet"
+    },
+    {
+      "label": "Close matched auction at cutoff",
+      "signature": "3tMh5qoya4y1JJZC8K85wZzHP12tok8T2CtjPbTHNe8L3cu6L68xD1vNohaq3AzoVZt7qdwzXekJVqbXsUPoBiFm",
+      "status": "finalized",
+      "explorerUrl": "https://explorer.solana.com/tx/3tMh5qoya4y1JJZC8K85wZzHP12tok8T2CtjPbTHNe8L3cu6L68xD1vNohaq3AzoVZt7qdwzXekJVqbXsUPoBiFm?cluster=devnet"
+    },
+    {
+      "label": "Close no-cross auction at cutoff",
+      "signature": "2kfe5TFFi6ibjSr1KXqjZWijChi4iKXver9eWDdch8U6LPNvPZJLJGAStj7ApaJ1ZJBMQjF7B4HbqLFqxpSVMGhZ",
+      "status": "finalized",
+      "explorerUrl": "https://explorer.solana.com/tx/2kfe5TFFi6ibjSr1KXqjZWijChi4iKXver9eWDdch8U6LPNvPZJLJGAStj7ApaJ1ZJBMQjF7B4HbqLFqxpSVMGhZ?cluster=devnet"
+    },
+    {
+      "label": "Close maximum 32-order, 101-tick auction",
+      "signature": "3MfJ6HnuJdFFEELhRLXwKMEdkb3mJtCEMGaN94BMvcEFLsUJCbUpY3oPJGy1ND5acr8pCg8ye1NFNFiwZmoYLQEq",
+      "status": "finalized",
+      "explorerUrl": "https://explorer.solana.com/tx/3MfJ6HnuJdFFEELhRLXwKMEdkb3mJtCEMGaN94BMvcEFLsUJCbUpY3oPJGy1ND5acr8pCg8ye1NFNFiwZmoYLQEq?cluster=devnet"
+    },
+    {
+      "label": "Buyer claims matched shares and quote refund",
+      "signature": "24TsKwQJmeGZKhx32k54MhJUCy9m7mEw1QKkHrvZ3aqf71jS5YkJqtjLY9GgrfrfzuaZFUNfv4s73cpJLKqsShwV",
+      "status": "finalized",
+      "explorerUrl": "https://explorer.solana.com/tx/24TsKwQJmeGZKhx32k54MhJUCy9m7mEw1QKkHrvZ3aqf71jS5YkJqtjLY9GgrfrfzuaZFUNfv4s73cpJLKqsShwV?cluster=devnet"
+    },
+    {
+      "label": "Seller claims matched USDC test proceeds",
+      "signature": "5rqKYoCyFeKGoA5pypGwKBXzmcVPqefBZRwf8zcGUzXUbJjrVACDR8q4eRwW4sLgEfSdEE6vnrG1k7xY5RSwzNvh",
+      "status": "finalized",
+      "explorerUrl": "https://explorer.solana.com/tx/5rqKYoCyFeKGoA5pypGwKBXzmcVPqefBZRwf8zcGUzXUbJjrVACDR8q4eRwW4sLgEfSdEE6vnrG1k7xY5RSwzNvh?cluster=devnet"
+    },
+    {
+      "label": "Buyer claims full no-cross quote refund",
+      "signature": "5R5kFJNoEdmhytESZ4eEV34f6N5Tk6Gn34xeRaMfToxQzy69mayESJ589D6QkDa2s41BYicpxwgjHR6vZibakh65",
+      "status": "finalized",
+      "explorerUrl": "https://explorer.solana.com/tx/5R5kFJNoEdmhytESZ4eEV34f6N5Tk6Gn34xeRaMfToxQzy69mayESJ589D6QkDa2s41BYicpxwgjHR6vZibakh65?cluster=devnet"
+    },
+    {
+      "label": "Seller claims full no-cross base refund",
+      "signature": "5hG7Fpm5xSijqJef5pDACHBzqZ3Tpr48ZjJh3XVngDf4dnBwQt3xwp7tp9XYvc6ZnWALEoGMVRu52X9C7sAVR4uv",
+      "status": "finalized",
+      "explorerUrl": "https://explorer.solana.com/tx/5hG7Fpm5xSijqJef5pDACHBzqZ3Tpr48ZjJh3XVngDf4dnBwQt3xwp7tp9XYvc6ZnWALEoGMVRu52X9C7sAVR4uv?cluster=devnet"
+    },
+    {
+      "label": "Claim maximum test buyer orders 1–8",
+      "signature": "wu7DxrHBJfcewD7zLC6hXQsz5pvbEU9gYB4faaNT5rM6Fvfc29XV2UmwUoMzmYqE7gL7PjAfwwtkfyYgbz6q4UK",
+      "status": "finalized",
+      "explorerUrl": "https://explorer.solana.com/tx/wu7DxrHBJfcewD7zLC6hXQsz5pvbEU9gYB4faaNT5rM6Fvfc29XV2UmwUoMzmYqE7gL7PjAfwwtkfyYgbz6q4UK?cluster=devnet"
+    },
+    {
+      "label": "Claim maximum test buyer orders 9–16",
+      "signature": "5cjMhPYWAG8okghaC7SpjVBtbHYnbrmeMV3dUKaL5hS9zq76E6XmryKpXxkPc54er7q1uUuLHovwizPpBXsdtcAN",
+      "status": "finalized",
+      "explorerUrl": "https://explorer.solana.com/tx/5cjMhPYWAG8okghaC7SpjVBtbHYnbrmeMV3dUKaL5hS9zq76E6XmryKpXxkPc54er7q1uUuLHovwizPpBXsdtcAN?cluster=devnet"
+    },
+    {
+      "label": "Claim maximum test seller orders 1–8",
+      "signature": "2RcG7k74pk1Ls3xEpdCWPGZ6DT77sCCfagWwJaP6nAxqdW21tmXikchuU3RXpyp9y6q2brB3MpGhanV97kJWU4Yh",
+      "status": "finalized",
+      "explorerUrl": "https://explorer.solana.com/tx/2RcG7k74pk1Ls3xEpdCWPGZ6DT77sCCfagWwJaP6nAxqdW21tmXikchuU3RXpyp9y6q2brB3MpGhanV97kJWU4Yh?cluster=devnet"
+    },
+    {
+      "label": "Claim maximum test seller orders 9–16",
+      "signature": "5bkcoJV3W2BftWb8MgYYGjV1gTYxcT1dFgogBzVt9aZv7GYisY5YLdyiktYD6urKYRq3BuNpJrHrAP4FSeBb63py",
+      "status": "finalized",
+      "explorerUrl": "https://explorer.solana.com/tx/5bkcoJV3W2BftWb8MgYYGjV1gTYxcT1dFgogBzVt9aZv7GYisY5YLdyiktYD6urKYRq3BuNpJrHrAP4FSeBb63py?cluster=devnet"
+    }
+  ]
+}

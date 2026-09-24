@@ -24,7 +24,8 @@ const state = {
   market: null,
   selectedMarket: null,
   quote: null,
-  manifest: null,
+  proof: null,
+  devnet: null,
   auction: null,
   wallet: null,
   walletKey: null,
@@ -62,8 +63,8 @@ function compactKey(value) {
 function mintName(mint) {
   if (mint === state.selectedMarket?.mint) return state.selectedMarket.symbol;
   if (mint === "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v") return "USDC";
-  if (mint === state.manifest?.mints?.quote?.address) return "DEMO-USD";
-  if (mint === state.manifest?.mints?.base?.address) return "DEMO-EQUITY";
+  if (mint === state.devnet?.mints?.quote?.address) return "DEMO-USD";
+  if (mint === state.devnet?.mints?.base?.address) return "DEMO-EQUITY";
   return compactKey(mint);
 }
 
@@ -362,15 +363,15 @@ function signatureAnchor(signature) {
 function renderProof() {
   const container = $("devnet-proof");
   container.replaceChildren();
-  const manifest = state.manifest;
-  const transactions = [...(manifest?.transactions ?? [])];
+  const proof = state.proof;
+  const transactions = [...(proof?.transactions ?? [])];
   try {
     const recent = JSON.parse(sessionStorage.getItem("callwindow-devnet-transactions") ?? "[]");
     transactions.push(...recent);
   } catch {}
   if (!transactions.length) {
     const note = document.createElement("p");
-    note.textContent = "Verified proof links are listed above. Wallet actions will add their finalized signatures here.";
+    note.textContent = "Historical proof links are listed above. Wallet actions will add current finalized signatures here.";
     container.append(note);
     return;
   }
@@ -386,8 +387,8 @@ function renderProof() {
     list.append(entry);
   }
   container.append(list);
-  const closeCosts = manifest?.closingCost;
-  const units = manifest?.closingComputeUnits;
+  const closeCosts = proof?.closingCost;
+  const units = proof?.closingComputeUnits;
   if (closeCosts?.matched || Number.isInteger(units)) {
     const compute = document.createElement("p");
     compute.className = "action-note";
@@ -415,7 +416,7 @@ function renderProof() {
 }
 
 function displayUnavailableAuction(reason) {
-  state.manifest = null;
+  state.devnet = null;
   state.auction = null;
   $("auction-status").textContent = "Devnet auction unavailable";
   $("auction-summary").textContent = reason;
@@ -437,27 +438,34 @@ async function loadAuction() {
     const response = await fetch("/api/devnet", { cache: "no-store" });
     const result = await response.json();
     if (result.status !== "available") {
+      state.proof = null;
       displayUnavailableAuction(result.reason ?? "No devnet auction is configured.");
       return;
     }
-    const manifest = result.manifest;
-    if (manifest.network !== "devnet" || !manifest.programId || !manifest.auctionAddress
-      || manifest.mints?.base?.name !== "DEMO-EQUITY"
-      || manifest.mints?.quote?.name !== "DEMO-USD") {
-      displayUnavailableAuction("The manifest did not identify the expected devnet demo program and test mints.");
+    const proof = result.historicalProof;
+    const current = result.currentReference;
+    if (proof?.network !== "devnet" || current?.network !== "devnet"
+      || !current.programId || !current.auctionAddress
+      || current.mints?.base?.name !== "DEMO-EQUITY"
+      || current.mints?.quote?.name !== "DEMO-USD"
+      || proof.historicalAuction?.state !== "closed and claimed") {
+      state.proof = null;
+      displayUnavailableAuction("The public proof did not identify the expected closed devnet demo and test mints.");
       return;
     }
-    const account = await connection.getAccountInfo(new PublicKey(manifest.auctionAddress), "finalized");
+    state.proof = proof;
+    state.devnet = current;
+    renderProof();
+    const account = await connection.getAccountInfo(new PublicKey(current.auctionAddress), "finalized");
     if (!account) {
-      displayUnavailableAuction("The configured auction account was not found on finalized devnet state.");
+      displayUnavailableAuction("Current devnet auction state is unavailable. Historical proof remains available below.");
       return;
     }
     const auction = decodeAuction(account.data);
-    if (auction.baseMint !== manifest.mints.base.address || auction.quoteMint !== manifest.mints.quote.address) {
+    if (auction.baseMint !== current.mints.base.address || auction.quoteMint !== current.mints.quote.address) {
       displayUnavailableAuction("On-chain mint addresses did not match the labeled demo assets. The auction is suppressed.");
       return;
     }
-    state.manifest = manifest;
     state.auction = auction;
     renderAuction();
     renderProof();
@@ -593,9 +601,9 @@ function findVaultAuthority(programId, auctionId) {
 }
 
 async function buildTokenAccounts(ownerKey, instructions) {
-  const manifest = state.manifest;
-  const baseMint = new PublicKey(manifest.mints.base.address);
-  const quoteMint = new PublicKey(manifest.mints.quote.address);
+  const devnet = state.devnet;
+  const baseMint = new PublicKey(devnet.mints.base.address);
+  const quoteMint = new PublicKey(devnet.mints.quote.address);
   const ownerBase = getAssociatedTokenAddressSync(baseMint, ownerKey, false, TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID);
   const ownerQuote = getAssociatedTokenAddressSync(quoteMint, ownerKey, false, TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID);
   for (const [address, mint] of [[ownerBase, baseMint], [ownerQuote, quoteMint]]) {
@@ -614,7 +622,7 @@ async function buildTokenAccounts(ownerKey, instructions) {
 }
 
 function auctionVaultAddresses(programId, auction) {
-  const auctionKey = new PublicKey(state.manifest.auctionAddress);
+  const auctionKey = new PublicKey(state.devnet.auctionAddress);
   const vaultAuthority = findVaultAuthority(programId, auctionKey);
   const baseVault = getAssociatedTokenAddressSync(
     new PublicKey(auction.baseMint), vaultAuthority, true, TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID,
@@ -626,7 +634,7 @@ function auctionVaultAddresses(programId, auction) {
 }
 
 async function buildOrderInstruction(side, limitCents, quantity) {
-  const programId = new PublicKey(state.manifest.programId);
+  const programId = new PublicKey(state.devnet.programId);
   const auction = state.auction;
   const user = state.walletKey;
   const prep = [];
@@ -653,7 +661,7 @@ async function buildOrderInstruction(side, limitCents, quantity) {
 }
 
 async function buildCancelInstruction(index) {
-  const programId = new PublicKey(state.manifest.programId);
+  const programId = new PublicKey(state.devnet.programId);
   const auction = state.auction;
   const user = state.walletKey;
   const prep = [];
@@ -680,7 +688,7 @@ async function buildCancelInstruction(index) {
 }
 
 async function buildClaimInstruction(index) {
-  const programId = new PublicKey(state.manifest.programId);
+  const programId = new PublicKey(state.devnet.programId);
   const auction = state.auction;
   const owner = state.walletKey;
   const prep = [];
@@ -707,8 +715,8 @@ async function buildClaimInstruction(index) {
 }
 
 async function buildPermissionlessInstruction(name) {
-  const programId = new PublicKey(state.manifest.programId);
-  const auctionKey = new PublicKey(state.manifest.auctionAddress);
+  const programId = new PublicKey(state.devnet.programId);
+  const auctionKey = new PublicKey(state.devnet.auctionAddress);
   return new TransactionInstruction({
     programId,
     keys: [
