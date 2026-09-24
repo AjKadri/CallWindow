@@ -32,6 +32,7 @@ For public devnet, use the selected finalized demo mints when resuming the deplo
 ```sh
 npm test
 npm run bench:bounds
+CALLWINDOW_CLUSTER=devnet \
 CALLWINDOW_BASE_MINT=B6ZoEr92PB58bN1MgTXwjZHBUxCZ895ERVdhFJtSQFcP \
 CALLWINDOW_QUOTE_MINT=7gLQ8vdtYTxbHa4YK9gjjsVe49WiKeH6pi2pV8us8zd4 \
 CALLWINDOW_CUTOFF_SECONDS=240 npm run demo:devnet
