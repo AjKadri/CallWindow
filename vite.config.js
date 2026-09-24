@@ -17,6 +17,7 @@ export default defineConfig({
       input: {
         home: path.resolve("web/index.html"),
         demo: path.resolve("web/demo/index.html"),
+        room: path.resolve("web/room/index.html"),
         proof: path.resolve("web/proof/index.html"),
         docs: path.resolve("web/docs/index.html"),
       },

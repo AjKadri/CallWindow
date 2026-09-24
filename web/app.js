@@ -3,7 +3,7 @@ import { evaluateQuoteLimit } from "../src/quote/limit.mjs";
 
 globalThis.Buffer = Buffer;
 
-const { Connection, PublicKey, Transaction, TransactionInstruction } = await import("@solana/web3.js");
+const { Connection, PublicKey, Transaction, TransactionInstruction, LAMPORTS_PER_SOL } = await import("@solana/web3.js");
 const {
   ASSOCIATED_TOKEN_PROGRAM_ID,
   TOKEN_PROGRAM_ID,
@@ -21,6 +21,7 @@ const connection = new Connection(DEVNET_RPC, "finalized");
 const encoder = new TextEncoder();
 
 const $ = (id) => document.getElementById(id);
+const isRoomPage = document.body.dataset.page === "auction-room";
 const state = {
   market: null,
   selectedMarket: null,
@@ -28,7 +29,9 @@ const state = {
   limitResult: null,
   proof: null,
   devnet: null,
+  liveRoom: null,
   auction: null,
+  walletBalances: null,
   wallet: null,
   walletKey: null,
   busy: false,
@@ -415,7 +418,7 @@ function renderProof() {
   const container = $("devnet-proof");
   container.replaceChildren();
   const proof = state.proof;
-  const transactions = [...(proof?.transactions ?? [])];
+  const transactions = [...(state.liveRoom?.seededOrders?.transactions ?? []), ...(proof?.transactions ?? [])];
   try {
     const recent = JSON.parse(sessionStorage.getItem("callwindow-devnet-transactions") ?? "[]");
     transactions.push(...recent);
@@ -466,8 +469,32 @@ function renderProof() {
   }
 }
 
+function renderRoomCountdown() {
+  const countdown = $("auction-countdown");
+  if (!countdown) return;
+  if (!state.auction) {
+    countdown.textContent = "No live window is open";
+    return;
+  }
+  const auction = state.auction;
+  const now = BigInt(Math.floor(Date.now() / 1000));
+  if (auction.state === 0 && now < auction.cutoffTime) {
+    const remaining = Number(auction.cutoffTime - now);
+    const minutes = Math.floor(remaining / 60);
+    const seconds = remaining % 60;
+    countdown.textContent = "Closes in " + minutes + "m " + String(seconds).padStart(2, "0") + "s";
+  } else if (auction.state === 0) {
+    countdown.textContent = "Ready to close";
+  } else if (auction.state === 1) {
+    countdown.textContent = "Closed. Claim a fill or refund.";
+  } else {
+    countdown.textContent = "Refunds available after the halted state.";
+  }
+}
+
 function displayUnavailableAuction(reason) {
   state.devnet = null;
+  state.liveRoom = null;
   state.auction = null;
   $("auction-status").textContent = "Devnet auction unavailable";
   $("auction-summary").textContent = reason;
@@ -475,9 +502,14 @@ function displayUnavailableAuction(reason) {
   $("opening-reference").textContent = "—";
   $("clearing-price").textContent = "—";
   $("matched-quantity").textContent = "—";
+  if ($("room-order-count")) $("room-order-count").textContent = "—";
+  if ($("room-cutoff")) $("room-cutoff").textContent = "—";
+  if ($("room-next-action")) $("room-next-action").textContent = "Check back later";
+  if ($("room-state-note")) $("room-state-note").textContent = reason;
   $("order-rows").innerHTML = '<tr><td colspan="6" class="empty-table">No devnet auction loaded.</td></tr>';
   $("order-form").hidden = true;
   $("auction-actions").hidden = true;
+  renderRoomCountdown();
   if (reason) setError($("devnet-error"), reason);
   renderProof();
 }
@@ -494,7 +526,8 @@ async function loadAuction() {
       return;
     }
     const proof = result.historicalProof;
-    const current = result.currentReference;
+    const liveRoom = result.liveRoom;
+    const current = liveRoom ?? result.currentReference;
     if (proof?.network !== "devnet" || current?.network !== "devnet"
       || !current.programId || !current.auctionAddress
       || current.mints?.base?.name !== "DEMO-EQUITY"
@@ -505,6 +538,7 @@ async function loadAuction() {
       return;
     }
     state.proof = proof;
+    state.liveRoom = liveRoom;
     state.devnet = current;
     renderProof();
     const account = await connection.getAccountInfo(new PublicKey(current.auctionAddress), "finalized");
@@ -519,6 +553,7 @@ async function loadAuction() {
     }
     state.auction = auction;
     renderAuction();
+    refreshWalletBalances();
     renderProof();
   } catch (errorValue) {
     displayUnavailableAuction(errorValue instanceof Error ? errorValue.message : "Devnet state request failed.");
@@ -537,7 +572,11 @@ function renderAuction() {
   $("opening-reference").textContent = formatDollars(auction.openingReferenceCents / 100);
   $("clearing-price").textContent = auction.clearingPriceCents > 0 ? formatDollars(auction.clearingPriceCents / 100) : "No cross";
   $("matched-quantity").textContent = formatShares(auction.matchedBase);
-  $("order-form").hidden = false;
+  if ($("room-order-count")) $("room-order-count").textContent = auction.orderCount + " / 32";
+  if ($("room-cutoff")) $("room-cutoff").textContent = cutoff;
+  renderRoomCountdown();
+  const roomReady = !isRoomPage || (Boolean(state.liveRoom) && auction.state === 0);
+  $("order-form").hidden = !roomReady;
   renderOrderRows();
   const now = BigInt(Math.floor(Date.now() / 1000));
   const windowOpen = auction.state === 0 && now < auction.cutoffTime;
@@ -549,6 +588,18 @@ function renderAuction() {
   $("action-note").textContent = canClose
     ? "Anyone with a devnet wallet can close after the cutoff."
     : canAbort ? "Anyone can abort after 30 minutes if no claim has started." : "";
+  if ($("room-next-action")) {
+    $("room-next-action").textContent = windowOpen
+      ? state.walletKey ? "Place a limit order" : "Connect wallet"
+      : auction.state === 1 ? "Claim or refund" : auction.state === 0 ? "Close the window" : "Refund available";
+  }
+  if ($("room-state-note")) {
+    $("room-state-note").textContent = windowOpen
+      ? "Orders are funded before the cutoff. A close is permissionless after it."
+      : auction.state === 1 ? "The close is finalized. Claim only an order owned by your wallet."
+        : auction.state === 0 ? "The cutoff has passed. Close the window, then claim."
+          : "The program state exposes refund actions where applicable.";
+  }
   const orderButton = $("submit-order");
   orderButton.disabled = !state.walletKey || !windowOpen;
   orderButton.textContent = !state.walletKey
@@ -836,8 +887,75 @@ async function connectWallet() {
     $("wallet-status").textContent = `Connected ${compactKey(state.walletKey.toBase58())}. The app sends transactions to Solana devnet.`;
     $("connect-wallet").textContent = "Connected · change wallet";
     renderAuction();
+    refreshWalletBalances();
   } catch (errorValue) {
     $("wallet-status").textContent = errorValue instanceof Error ? errorValue.message : "Wallet connection was not completed.";
+  }
+}
+
+async function refreshWalletBalances() {
+  if (!state.walletKey || !state.devnet) return;
+  const solElement = $("room-sol");
+  const baseElement = $("room-base");
+  const quoteElement = $("room-quote");
+  if (!solElement && !baseElement && !quoteElement) return;
+  try {
+    const solLamports = await connection.getBalance(state.walletKey, "finalized");
+    const baseMint = new PublicKey(state.devnet.mints.base.address);
+    const quoteMint = new PublicKey(state.devnet.mints.quote.address);
+    const baseAta = getAssociatedTokenAddressSync(baseMint, state.walletKey, false, TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID);
+    const quoteAta = getAssociatedTokenAddressSync(quoteMint, state.walletKey, false, TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID);
+    const balances = await Promise.all([
+      connection.getTokenAccountBalance(baseAta, "finalized").catch(() => ({ value: { amount: "0" } })),
+      connection.getTokenAccountBalance(quoteAta, "finalized").catch(() => ({ value: { amount: "0" } })),
+    ]);
+    state.walletBalances = {
+      sol: solLamports / LAMPORTS_PER_SOL,
+      base: balances[0].value.amount,
+      quote: balances[1].value.amount,
+    };
+    if (solElement) solElement.textContent = state.walletBalances.sol.toFixed(4) + " SOL";
+    if (baseElement) baseElement.textContent = formatRawTokenAmount(state.walletBalances.base, state.devnet.mints.base.decimals);
+    if (quoteElement) quoteElement.textContent = formatRawTokenAmount(state.walletBalances.quote, state.devnet.mints.quote.decimals);
+  } catch (errorValue) {
+    if (solElement) solElement.textContent = "unavailable";
+    if (baseElement) baseElement.textContent = "unavailable";
+    if (quoteElement) quoteElement.textContent = "unavailable";
+    if ($("funding-status")) $("funding-status").textContent = errorValue instanceof Error ? errorValue.message : "Wallet balances unavailable.";
+  }
+}
+
+async function claimTestAssets() {
+  const status = $("funding-status");
+  const button = $("get-test-assets");
+  if (!state.walletKey) {
+    status.textContent = "Connect a devnet wallet first.";
+    return;
+  }
+  button.disabled = true;
+  button.textContent = "Sending finalized distribution…";
+  if ($("funding-link")) $("funding-link").hidden = true;
+  try {
+    const response = await fetch("/api/auction-room/claim", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ wallet: state.walletKey.toBase58() }),
+    });
+    const result = await response.json();
+    if (!response.ok || result.status !== "available") throw new Error(result.reason ?? "Test-asset distribution was unavailable.");
+    status.textContent = "Finalized test assets sent to this wallet.";
+    if ($("funding-link")) {
+      $("funding-link").href = result.explorerUrl;
+      $("funding-link").hidden = false;
+    }
+    if (result.signature) rememberTransaction("Get test assets", result.signature);
+    renderProof();
+    await refreshWalletBalances();
+  } catch (errorValue) {
+    status.textContent = errorValue instanceof Error ? errorValue.message : "Test assets could not be distributed.";
+  } finally {
+    button.disabled = false;
+    button.textContent = "Get test assets";
   }
 }
 
@@ -924,32 +1042,43 @@ async function copyMint() {
   }
 }
 
-$("market-search").addEventListener("input", filterMarketOptions);
-$("market-selector").addEventListener("change", (event) => selectMarket(event.target.value));
-$("quote-direction").addEventListener("change", updateQuoteSizeControl);
-$("quote-direction").addEventListener("change", resetLimitResult);
-$("quote-amount").addEventListener("input", resetLimitResult);
-$("quote-limit").addEventListener("input", resetLimitResult);
-$("quote-form").addEventListener("submit", checkQuote);
-$("copy-mint").addEventListener("click", copyMint);
-$("connect-wallet").addEventListener("click", connectWallet);
-$("refresh-auction").addEventListener("click", loadAuction);
-$("order-form").addEventListener("submit", placeOrder);
-$("order-side").addEventListener("change", updateEscrowEstimate);
-$("order-limit").addEventListener("input", updateEscrowEstimate);
-$("order-quantity").addEventListener("input", updateEscrowEstimate);
-$("order-rows").addEventListener("click", orderRowAction);
-$("close-auction").addEventListener("click", closeAuction);
-$("abort-auction").addEventListener("click", abortAuction);
+const on = (id, event, handler) => {
+  const element = $(id);
+  if (element) element.addEventListener(event, handler);
+};
+
+if (!isRoomPage) {
+  on("market-search", "input", filterMarketOptions);
+  on("market-selector", "change", (event) => selectMarket(event.target.value));
+  on("quote-direction", "change", updateQuoteSizeControl);
+  on("quote-direction", "change", resetLimitResult);
+  on("quote-amount", "input", resetLimitResult);
+  on("quote-limit", "input", resetLimitResult);
+  on("quote-form", "submit", checkQuote);
+  on("copy-mint", "click", copyMint);
+}
+on("connect-wallet", "click", connectWallet);
+on("get-test-assets", "click", claimTestAssets);
+on("refresh-auction", "click", loadAuction);
+on("order-form", "submit", placeOrder);
+on("order-side", "change", updateEscrowEstimate);
+on("order-limit", "input", updateEscrowEstimate);
+on("order-quantity", "input", updateEscrowEstimate);
+on("order-rows", "click", orderRowAction);
+on("close-auction", "click", closeAuction);
+on("abort-auction", "click", abortAuction);
 window.addEventListener("focus", loadAuction);
 
-loadMarket();
+if (!isRoomPage) {
+  loadMarket();
+  updateQuoteSizeControl();
+}
 loadAuction();
-updateQuoteSizeControl();
 updateEscrowEstimate();
 setInterval(() => {
   if (state.quote) renderQuote();
   if (state.limitResult) checkQuoteLimit();
   if (state.auction) renderAuction();
+  else renderRoomCountdown();
 }, 1_000);
 setInterval(loadAuction, 7_000);

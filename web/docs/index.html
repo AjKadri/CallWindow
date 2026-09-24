@@ -21,6 +21,7 @@
         <nav class="nav-pill" aria-label="Main navigation">
           <a href="/">Home</a>
           <a class="nav-cta" href="/demo/">Demo</a>
+          <a href="/room/">Room</a>
           <a href="/proof/">Proof</a>
           <a aria-current="page" href="/docs/">Docs</a>
         </nav>
@@ -68,9 +69,22 @@
         </div>
       </section>
 
+      <section class="docs-section" id="auction-room">
+        <div class="page-heading">
+          <p class="section-kicker">Public Auction Room</p>
+          <h2>Try one bounded devnet window.</h2>
+          <p>Connect a wallet on Solana devnet, use the faucet for SOL, and claim a capped amount of DEMO-EQUITY and DEMO-USD once for the current window. Submit a funded buy or sell limit before cutoff. After cutoff, anyone can close the window, then an order owner can claim a fill or refund.</p>
+        </div>
+        <div class="docs-scope-grid">
+          <div><span>Visitor capacity</span><code>30 orders after 2 disclosed test orders</code></div>
+          <div><span>Distribution</span><code>1 claim per wallet · 20 claims per window</code></div>
+          <div><span>Funding</span><code>Devnet SOL faucet only · no mainnet transaction</code></div>
+        </div>
+      </section>
+
       <section class="docs-section docs-cta">
-        <div><p class="section-kicker">Next step</p><h2>See each state in the working surface.</h2><p>The Demo page keeps live data, unavailable states, devnet state, wallet actions, and finalized proof links in one place.</p></div>
-        <a class="button primary" href="/demo/">Open Demo <span aria-hidden="true">↗</span></a>
+        <div><p class="section-kicker">Next step</p><h2>See each state in the working surface.</h2><p>The Auction Room is the public test-asset path. The Demo page keeps live PreStocks reference data and no-taker quote checks separate.</p></div>
+        <a class="button primary" href="/room/">Open Auction Room <span aria-hidden="true">↗</span></a>
       </section>
 
       <section class="footer-cta" aria-labelledby="footer-cta-title">
@@ -85,8 +99,8 @@
       <footer class="callwindow-footer">
         <div class="callwindow-footer-grid">
           <div class="footer-brand-column"><a class="brand" href="/" aria-label="CallWindow home"><img class="brand-mark" src="/assets/callwindow-symbol.svg" alt="" aria-hidden="true" /><span class="brand-wordmark">CallWindow</span></a><p>Scheduled auctions for patient liquidity.</p></div>
-          <nav class="footer-column" aria-label="Explore"><h2>Explore</h2><a href="/">Home</a><a href="/demo/">Demo</a><a href="/proof/">Proof</a><a href="/docs/">Docs</a></nav>
-          <nav class="footer-column" aria-label="Understand"><h2>Understand</h2><a href="/docs/#liquidity-problem">The liquidity problem</a><a href="/#how-it-works">How it works</a><a href="/demo/#market">Read-only PreStocks market</a></nav>
+          <nav class="footer-column" aria-label="Explore"><h2>Explore</h2><a href="/">Home</a><a href="/room/">Auction Room</a><a href="/demo/">Demo</a><a href="/proof/">Proof</a><a href="/docs/">Docs</a></nav>
+          <nav class="footer-column" aria-label="Understand"><h2>Understand</h2><a href="/docs/#liquidity-problem">The liquidity problem</a><a href="/docs/#auction-room">Public Auction Room</a><a href="/#how-it-works">How it works</a><a href="/demo/#market">Read-only PreStocks market</a></nav>
           <div class="footer-column"><h2>Verify</h2><a href="https://explorer.solana.com/address/GxX6X6zZSQSuxEoTHPwaAmKCcpGRVRiB6ERANHzS7Eq9?cluster=devnet" target="_blank" rel="noreferrer">Public devnet program ↗</a><a href="https://explorer.solana.com/tx/3tMh5qoya4y1JJZC8K85wZzHP12tok8T2CtjPbTHNe8L3cu6L68xD1vNohaq3AzoVZt7qdwzXekJVqbXsUPoBiFm?cluster=devnet" target="_blank" rel="noreferrer">Finalized matched close ↗</a><a href="https://github.com/AjKadri/CallWindow" target="_blank" rel="noreferrer">GitHub repository ↗</a></div>
         </div>
         <p class="footer-status">Verified auction uses Solana devnet test assets. PreStocks market data is a read-only mainnet reference.</p>

@@ -4,6 +4,12 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { getPreStocksCatalog, getPreStocksQuote } from "./market.mjs";
+import {
+  AuctionRoomError,
+  claimTestAssets,
+  getDistributorStatus,
+  readLiveAuctionRoom,
+} from "./auction-room.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const WEB_ROOT = existsSync(path.join(ROOT, "dist", "index.html"))
@@ -41,6 +47,19 @@ async function readPublicDevnetProof() {
   return null;
 }
 
+async function readRequestBody(request) {
+  let body = "";
+  for await (const chunk of request) {
+    body += chunk;
+    if (body.length > 16_384) throw new AuctionRoomError("Request body is too large.", 413);
+  }
+  try {
+    return JSON.parse(body || "{}");
+  } catch {
+    throw new AuctionRoomError("Request body must be valid JSON.", 400);
+  }
+}
+
 async function serveStatic(response, pathname) {
   let requestedPath;
   try {
@@ -71,11 +90,24 @@ async function serveStatic(response, pathname) {
 
 export function createCallWindowServer({ fetchImpl = fetch } = {}) {
   return createServer(async (request, response) => {
-    if (request.method !== "GET") {
-      response.writeHead(405, { allow: "GET" }).end();
+    const url = new URL(request.url ?? "/", "http://127.0.0.1");
+    if (request.method === "POST" && url.pathname === "/api/auction-room/claim") {
+      try {
+        const body = await readRequestBody(request);
+        sendJson(response, 200, await claimTestAssets(body.wallet));
+      } catch (error) {
+        const statusCode = error instanceof AuctionRoomError ? error.statusCode : 500;
+        sendJson(response, statusCode, {
+          status: "unavailable",
+          reason: error.message || "Test-asset distribution failed.",
+        });
+      }
       return;
     }
-    const url = new URL(request.url ?? "/", "http://127.0.0.1");
+    if (request.method !== "GET") {
+      response.writeHead(405, { allow: "GET, POST" }).end();
+      return;
+    }
     if (url.pathname === "/api/market") {
       sendJson(response, 200, await getPreStocksCatalog(fetchImpl));
       return;
@@ -100,10 +132,13 @@ export function createCallWindowServer({ fetchImpl = fetch } = {}) {
     }
     if (url.pathname === "/api/devnet") {
       const historicalProof = await readPublicDevnetProof();
+      const liveRoom = await readLiveAuctionRoom();
       sendJson(response, 200, historicalProof
         ? {
           status: "available",
           network: "devnet",
+          liveRoom,
+          distributor: getDistributorStatus(liveRoom),
           historicalProof,
           currentReference: {
             network: historicalProof.network,
@@ -116,6 +151,8 @@ export function createCallWindowServer({ fetchImpl = fetch } = {}) {
         : {
           status: "unavailable",
           network: "devnet",
+          liveRoom,
+          distributor: getDistributorStatus(liveRoom),
           reason: "No tracked public devnet proof is available in this checkout yet.",
         });
       return;
