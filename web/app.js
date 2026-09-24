@@ -1,10 +1,14 @@
-import { Connection, PublicKey, Transaction, TransactionInstruction } from "@solana/web3.js";
-import {
+import { Buffer } from "buffer/";
+
+globalThis.Buffer = Buffer;
+
+const { Connection, PublicKey, Transaction, TransactionInstruction } = await import("@solana/web3.js");
+const {
   ASSOCIATED_TOKEN_PROGRAM_ID,
   TOKEN_PROGRAM_ID,
   createAssociatedTokenAccountInstruction,
   getAssociatedTokenAddressSync,
-} from "@solana/spl-token";
+} = await import("@solana/spl-token");
 
 const KALSHI_MINT = "PreLWGkkeqG1s4HEfFZSy9moCrJ7btsHuUtfcCeoRua";
 const DEVNET_RPC = "https://api.devnet.solana.com";

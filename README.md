@@ -1,6 +1,6 @@
 # CallWindow
 
-CallWindow pairs a live, read-only PreStocks KALSHI record and exact-mint route check with a separate funded auction on Solana devnet. The auction uses DEMO-EQUITY and DEMO-USD test mints with no equity backing.
+CallWindow pairs a live, read-only PreStocks KALSHI record and exact-mint route check with a separate bounded auction demo built for Solana devnet. The escrow-to-claim/refund path is verified on localnet using DEMO-EQUITY and DEMO-USD test mints with no equity backing. Public devnet deployment remains unverified pending funding.
 
 ## Run the app
 

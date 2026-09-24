@@ -15,7 +15,8 @@
   },
   "dependencies": {
     "@solana/spl-token": "^0.4.15",
-    "@solana/web3.js": "^1.99.0"
+    "@solana/web3.js": "^1.99.0",
+    "buffer": "^6.0.3"
   },
   "devDependencies": {
     "vite": "^8.3.0"
