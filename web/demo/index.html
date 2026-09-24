@@ -166,9 +166,13 @@
                 <span class="read-only-tag read-only-devnet">Devnet only</span>
               </div>
               <p class="panel-copy">Connect a wallet on devnet. Your wallet reviews and signs each test transaction.</p>
-              <div class="wallet-actions" aria-label="Choose a wallet">
-                <button id="connect-phantom" class="button button-outline" type="button">Connect Phantom</button>
-                <button id="connect-solflare" class="button button-outline" type="button">Connect Solflare</button>
+              <button id="connect-wallet" class="button button-outline" type="button" aria-expanded="false" aria-controls="wallet-chooser">Connect wallet</button>
+              <div id="wallet-chooser" class="wallet-chooser" role="dialog" aria-labelledby="wallet-chooser-title" hidden>
+                <div class="wallet-chooser-topline"><strong id="wallet-chooser-title">Choose a wallet</strong><button id="close-wallet-chooser" class="wallet-chooser-close" type="button" aria-label="Close wallet chooser">×</button></div>
+                <div class="wallet-chooser-options">
+                  <button id="connect-phantom" class="button button-outline" type="button">Connect Phantom</button>
+                  <button id="connect-solflare" class="button button-outline" type="button">Connect Solflare</button>
+                </div>
               </div>
               <p id="wallet-choice-status" class="wallet-choice-status" aria-live="polite">Detecting Phantom and Solflare…</p>
               <p id="wallet-status" class="wallet-status">No wallet connected.</p>

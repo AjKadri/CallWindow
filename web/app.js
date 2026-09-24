@@ -11,6 +11,10 @@ import {
   signAfterDevnetPreflight,
 } from "../src/wallet/devnet.mjs";
 import {
+  CREATOR_ESTIMATED_FEES_LAMPORTS,
+  readDevnetFunding,
+} from "../src/wallet/funding.mjs";
+import {
   canShareSetup,
   creatorWindowState,
   DEMO_BASE_MINT,
@@ -77,6 +81,7 @@ const state = {
   walletId: null,
   walletName: null,
   walletNetwork: { status: "unknown", reported: null },
+  creatorFunding: null,
   creatorError: null,
   creatorStage: null,
   busy: false,
@@ -85,6 +90,7 @@ const state = {
 const CREATOR_STAGE_LABELS = {
   validation: "Form validation",
   network: "Wallet network check",
+  funding: "Devnet funding check",
   time: "Devnet time lookup",
   build: "Instruction build",
   preparation: "Devnet transaction preparation",
@@ -668,31 +674,54 @@ async function requireConnectedDevnetWallet() {
 }
 
 function renderWalletChoices() {
+  const connectButton = $("connect-wallet");
+  const chooser = $("wallet-chooser");
   const status = $("wallet-choice-status");
   const wallets = getInjectedWallets();
   const signableWallets = wallets.filter((wallet) => canSignDevnet(wallet.provider));
+  if (connectButton) {
+    connectButton.textContent = state.walletKey && state.walletName
+      ? `Change wallet · ${state.walletName} · ${compactKey(state.walletKey.toBase58())}`
+      : "Connect wallet";
+    connectButton.setAttribute("aria-expanded", String(Boolean(chooser && !chooser.hidden)));
+  }
   for (const id of ["phantom", "solflare"]) {
     const button = $("connect-" + id);
     if (!button) continue;
     const wallet = wallets.find((candidate) => candidate.id === id);
     const canSign = Boolean(wallet && canSignDevnet(wallet.provider));
     button.disabled = !canSign;
-    button.textContent = state.walletId === id && state.walletKey
-      ? `Connected · ${wallet.name}`
-      : `Connect ${id === "phantom" ? "Phantom" : "Solflare"}`;
+    button.textContent = `Connect ${id === "phantom" ? "Phantom" : "Solflare"}`;
     button.title = wallet
       ? canSign ? "Connect this wallet for Devnet-only signing." : `${wallet.name} is detected but does not expose signTransaction.`
       : `${id === "phantom" ? "Phantom" : "Solflare"} is not detected in this browser.`;
   }
   if (status) {
     status.textContent = state.walletKey && state.walletName
-      ? `${state.walletName} connected. It signs only the Devnet test transaction.`
+      ? `${state.walletName} ${compactKey(state.walletKey.toBase58())} connected. It signs only the Devnet test transaction.`
       : !wallets.length
         ? "No supported wallet detected. Install Phantom or Solflare, then reload this page."
         : !signableWallets.length
           ? "A supported wallet was detected, but it cannot sign Devnet transactions in this browser."
           : "Choose Phantom or Solflare. Each action names the wallet it will connect.";
   }
+}
+
+function openWalletChooser() {
+  const chooser = $("wallet-chooser");
+  if (!chooser) return;
+  chooser.hidden = false;
+  renderWalletChoices();
+  const firstAvailable = ["connect-phantom", "connect-solflare"].map((id) => $(id)).find((button) => button && !button.disabled);
+  (firstAvailable ?? $("close-wallet-chooser"))?.focus();
+}
+
+function closeWalletChooser() {
+  const chooser = $("wallet-chooser");
+  if (!chooser) return;
+  chooser.hidden = true;
+  renderWalletChoices();
+  $("connect-wallet")?.focus();
 }
 
 function resetWalletForChoice(id) {
@@ -702,6 +731,7 @@ function resetWalletForChoice(id) {
   state.walletName = null;
   state.walletNetwork = { status: "unknown", reported: null };
   state.walletBalances = null;
+  state.creatorFunding = null;
   state.creatorError = null;
   state.creatorStage = null;
   $("wallet-status").textContent = "Wallet selected. Connect it to continue.";
@@ -1352,6 +1382,7 @@ async function connectWallet(walletId) {
     $("wallet-status").textContent = state.walletNetwork.status === "devnet"
       ? `Connected ${compactKey(state.walletKey.toBase58())}. ${wallet.name} reports Solana Devnet.`
       : walletNetworkReason();
+    closeWalletChooser();
     renderWalletChoices();
     renderWalletNetworkState();
     renderAuction();
@@ -1456,8 +1487,97 @@ function updateEscrowEstimate() {
   }
 }
 
+function formatSolLamports(lamports) {
+  try {
+    return (Number(BigInt(lamports)) / LAMPORTS_PER_SOL).toFixed(6);
+  } catch {
+    return "unavailable";
+  }
+}
+
+function creatorOwnerTokenAccounts(walletKey = state.walletKey) {
+  if (!walletKey) return [];
+  return [DEMO_BASE_MINT, DEMO_QUOTE_MINT].map((mint) => getAssociatedTokenAddressSync(
+    new PublicKey(mint),
+    walletKey,
+    false,
+    TOKEN_PROGRAM_ID,
+    ASSOCIATED_TOKEN_PROGRAM_ID,
+  ));
+}
+
+function renderCreatorFunding() {
+  const status = $("create-funding-status");
+  const faucet = $("create-faucet-link");
+  if (!status) return;
+  if (!state.walletKey || !walletCanTransact()) {
+    status.hidden = true;
+    if (faucet) faucet.hidden = true;
+    return;
+  }
+  const funding = state.creatorFunding;
+  status.hidden = false;
+  status.dataset.state = funding?.status === "missing" || funding?.status === "insufficient" || funding?.status === "unavailable"
+    ? "error"
+    : "progress";
+  if (!funding || funding.status === "checking") {
+    status.textContent = "Checking this wallet’s finalized Devnet account and SOL balance…";
+    if (faucet) faucet.hidden = true;
+    return;
+  }
+  if (funding.status === "unavailable") {
+    status.textContent = `Devnet funding check unavailable${funding.error ? `: ${funding.error}` : ". The create action is paused until the balance can be checked."}`;
+    if (faucet) faucet.hidden = true;
+    return;
+  }
+  const balance = formatSolLamports(funding.balanceLamports);
+  const required = formatSolLamports(funding.requiredLamports);
+  const shortfall = formatSolLamports(funding.shortfallLamports);
+  if (funding.status === "missing") {
+    status.textContent = `Devnet account not found. Balance: ${balance} SOL. Required: ${required} SOL. Shortfall: ${shortfall} SOL. Fund this wallet before creating a window.`;
+  } else if (funding.status === "insufficient") {
+    status.textContent = `Devnet SOL is insufficient. Balance: ${balance} SOL. Required: ${required} SOL. Shortfall: ${shortfall} SOL. Fund this wallet before creating a window.`;
+  } else {
+    status.textContent = `Devnet balance: ${balance} SOL. Estimated required for account rent and create plus opening fees: ${required} SOL. Shortfall: ${shortfall} SOL.`;
+  }
+  if (faucet) faucet.hidden = funding.status === "sufficient";
+}
+
+async function refreshCreatorFunding() {
+  if (!walletCanTransact()) {
+    state.creatorFunding = null;
+    renderCreatorFunding();
+    return null;
+  }
+  const walletKey = state.walletKey.toBase58();
+  state.creatorFunding = { status: "checking" };
+  renderCreatorFunding();
+  try {
+    const funding = await readDevnetFunding({
+      connection,
+      walletKey: state.walletKey,
+      auctionAccountSize: AUCTION_ACCOUNT_SIZE,
+      tokenAccountSize: TOKEN_ACCOUNT_SIZE,
+      ownerTokenAccounts: creatorOwnerTokenAccounts(),
+      estimatedFeesLamports: CREATOR_ESTIMATED_FEES_LAMPORTS,
+    });
+    if (state.walletKey?.toBase58() !== walletKey) return null;
+    state.creatorFunding = funding;
+    renderCreatorFunding();
+    renderAuctionSetup();
+    return funding;
+  } catch (errorValue) {
+    if (state.walletKey?.toBase58() !== walletKey) return null;
+    state.creatorFunding = { status: "unavailable", error: errorValue instanceof Error ? errorValue.message : String(errorValue) };
+    renderCreatorFunding();
+    renderAuctionSetup();
+    return state.creatorFunding;
+  }
+}
+
 function renderAuctionSetup() {
   if (!isRoomPage || !$("create-window-form")) return;
+  renderCreatorFunding();
   if (!state.setup) state.setup = readAuctionSetup();
   const setup = state.setup;
   const createButton = $("create-window");
@@ -1467,9 +1587,12 @@ function renderAuctionSetup() {
   const status = $("create-status");
   if (!setup) {
     const creatorState = creatorWindowState({ walletKey: walletCanTransact(), setup: null, error: state.creatorError });
+    const fundingPending = walletCanTransact() && (!state.creatorFunding || state.creatorFunding.status === "checking");
     if (createButton) {
-      createButton.disabled = creatorState.buttonDisabled;
-      createButton.textContent = creatorState.buttonText;
+      createButton.disabled = creatorState.buttonDisabled || fundingPending;
+      createButton.textContent = state.creatorFunding?.status === "checking"
+        ? "Checking Devnet funding…"
+        : creatorState.buttonText;
     }
     if (finishButton) finishButton.hidden = true;
     if (share) share.hidden = true;
@@ -1522,23 +1645,15 @@ async function updateCreateEstimate() {
     const requirement = orderRequirements({ side, quantityBaseUnits: quantity, limitPriceCents: limitCents });
     let solLine = "Devnet SOL rent and fees: unavailable until a wallet is connected.";
     if (walletCanTransact()) {
-      const baseMint = new PublicKey(DEMO_BASE_MINT);
-      const quoteMint = new PublicKey(DEMO_QUOTE_MINT);
-      const ownerBase = getAssociatedTokenAddressSync(baseMint, state.walletKey, false, TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID);
-      const ownerQuote = getAssociatedTokenAddressSync(quoteMint, state.walletKey, false, TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID);
-      const missingOwnerAtas = (await Promise.all([
-        connection.getAccountInfo(ownerBase, "finalized"),
-        connection.getAccountInfo(ownerQuote, "finalized"),
-      ])).filter((account) => !account).length;
-      const [auctionRent, tokenRent] = await Promise.all([
-        connection.getMinimumBalanceForRentExemption(AUCTION_ACCOUNT_SIZE, "finalized"),
-        connection.getMinimumBalanceForRentExemption(TOKEN_ACCOUNT_SIZE, "finalized"),
-      ]);
-      const rent = auctionRent + tokenRent * (2 + missingOwnerAtas);
-      const baseFees = 10_000;
-      solLine = "Expected account rent ≈ " + (rent / LAMPORTS_PER_SOL).toFixed(6)
-        + " SOL. Base network fees ≈ " + (baseFees / LAMPORTS_PER_SOL).toFixed(6)
-        + " SOL for the create and opening-order transactions, before wallet-specific changes.";
+      if (!state.creatorFunding) await refreshCreatorFunding();
+      const funding = state.creatorFunding;
+      solLine = funding?.status === "sufficient"
+        ? `Estimated Devnet SOL required: ${formatSolLamports(funding.requiredLamports)} SOL, including current rent and create plus opening fees.`
+        : funding?.status === "checking"
+          ? "Checking the connected wallet’s Devnet account and SOL balance."
+          : funding?.status === "unavailable"
+            ? "Devnet funding check unavailable until the RPC responds."
+            : "Devnet SOL funding is below the current estimate. See the funding status beside the create action.";
     } else if (state.walletKey) {
       solLine = walletNetworkReason();
     }
@@ -1623,6 +1738,14 @@ async function createAuctionWindow(event) {
     if (!Number.isInteger(durationSeconds) || durationSeconds < 10 || durationSeconds > 3600) {
       throw new RangeError("Choose a cutoff between 10 seconds and one hour.");
     }
+    setCreatorProgress("funding", "Checking the connected wallet’s finalized Devnet account and SOL balance…");
+    const funding = await refreshCreatorFunding();
+    if (funding?.status !== "sufficient") {
+      if (funding?.status === "missing" || funding?.status === "insufficient") {
+        throw new Error(`The connected wallet does not have enough Devnet SOL. Balance: ${formatSolLamports(funding.balanceLamports)} SOL. Required: ${formatSolLamports(funding.requiredLamports)} SOL. Shortfall: ${formatSolLamports(funding.shortfallLamports)} SOL. Use the test-SOL faucet, then retry.`);
+      }
+      throw new Error(funding?.error ?? "Devnet funding could not be checked. No transaction was built or simulated.");
+    }
     setCreatorProgress("time", "Reading finalized Solana Devnet time…");
     const slot = await connection.getSlot("finalized");
     const chainTime = await connection.getBlockTime(slot);
@@ -1659,7 +1782,10 @@ async function createAuctionWindow(event) {
     creatorFailure(errorValue);
     renderAuctionSetup();
   } finally {
-    if (!state.setup || canShareSetup(state.setup)) button.disabled = !walletCanTransact();
+    if (!state.setup || canShareSetup(state.setup)) {
+      const fundingPending = walletCanTransact() && (!state.creatorFunding || state.creatorFunding.status === "checking");
+      button.disabled = !walletCanTransact() || fundingPending;
+    }
   }
 }
 
@@ -1793,8 +1919,16 @@ if (!isRoomPage) {
   on("quote-form", "submit", checkQuote);
   on("copy-mint", "click", copyMint);
 }
+on("connect-wallet", "click", openWalletChooser);
+on("close-wallet-chooser", "click", closeWalletChooser);
 on("connect-phantom", "click", () => connectWallet("phantom"));
 on("connect-solflare", "click", () => connectWallet("solflare"));
+on("wallet-chooser", "keydown", (event) => {
+  if (event.key === "Escape") {
+    event.preventDefault();
+    closeWalletChooser();
+  }
+});
 on("get-test-assets", "click", claimTestAssets);
 on("create-window-form", "submit", createAuctionWindow);
 const creatorForm = $("create-window-form");

@@ -55,6 +55,8 @@ test("devnet preflight distinguishes insufficient rent from other failures", () 
   assert.match(insufficient, /not have enough devnet SOL/);
   const other = classifyDevnetSimulation({ err: { InstructionError: [0, "Custom"] }, logs: ["custom program failure"] });
   assert.match(other, /Devnet preflight failed before signing/);
+  const accountFailure = classifyDevnetSimulation({ err: { InstructionError: [0, "AccountNotFound"] }, logs: ["a program account was not found"] });
+  assert.doesNotMatch(accountFailure, /not have enough devnet SOL/);
 });
 
 test("failed creator preflight leaves a visible retry state and never sends", async () => {
