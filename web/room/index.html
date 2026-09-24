@@ -75,6 +75,38 @@
           </div>
         </div>
 
+        <div class="room-create-grid">
+          <article class="panel">
+            <div class="panel-topline">
+              <div><p class="eyebrow">Creator flow · devnet only</p><h3>Start a shareable window</h3></div>
+              <span class="read-only-tag read-only-devnet">Test assets only</span>
+            </div>
+            <p class="panel-copy">Create an on-chain window with the deployed 32-order, 101-tick bounds. Your opening order must finalize before the share link appears.</p>
+            <form id="create-window-form" class="order-form">
+              <label for="create-side">Opening side</label>
+              <select id="create-side" name="side"><option value="buy">Buy DEMO-EQUITY with DEMO-USD</option><option value="sell">Sell DEMO-EQUITY for DEMO-USD</option></select>
+              <label for="create-limit">Opening limit per share</label>
+              <div class="amount-input-wrap"><input id="create-limit" name="limit" type="number" min="19.50" max="20.50" step="0.01" value="20.00" required /><span>USD</span></div>
+              <label for="create-quantity">Opening quantity</label>
+              <div class="amount-input-wrap"><input id="create-quantity" name="quantity" type="number" min="0.01" max="100" step="0.01" value="1.50" required /><span>shares</span></div>
+              <label for="create-cutoff">Cutoff from now</label>
+              <div class="amount-input-wrap"><input id="create-cutoff" name="cutoff" type="number" min="10" max="3600" step="10" value="120" required /><span>seconds</span></div>
+              <p id="create-estimate" class="escrow-estimate">Connect a wallet to estimate rent and fees. Token requirements update from the opening side, quantity, and limit.</p>
+              <button id="create-window" class="button button-dark button-full" type="submit" disabled>Connect wallet to create window</button>
+            </form>
+            <p id="create-status" class="funding-status" aria-live="polite">A finalized opening order is required before sharing.</p>
+            <button id="finish-opening-order" class="button button-outline button-full" type="button" hidden>Finish opening order</button>
+            <a id="create-share-link" class="funding-link" href="#" target="_blank" rel="noreferrer" hidden>Open shareable room ↗</a>
+            <code id="create-share-url" class="create-share-url"></code>
+          </article>
+          <article class="panel create-rules-panel">
+            <p class="eyebrow">What gets shared</p>
+            <h3>One verified room URL</h3>
+            <p class="panel-copy">The link contains only the auction address. The room reloads the finalized devnet account, verifies program ownership and both exact demo mints, then shows provisional interest until cutoff.</p>
+            <p class="disclosure">Creating a window never changes the PreStocks selector and never submits a mainnet transaction. DEMO-EQUITY and DEMO-USD have no PreStocks backing or monetary value.</p>
+          </article>
+        </div>
+
         <div class="room-grid">
           <article class="panel room-orders-panel">
             <div class="panel-topline">
@@ -84,9 +116,16 @@
             <p id="devnet-error" class="inline-error" hidden></p>
             <div class="auction-facts">
               <div><span>Opening reference</span><strong id="opening-reference">—</strong></div>
-              <div><span>Clearing price</span><strong id="clearing-price">—</strong></div>
-              <div><span>Matched quantity</span><strong id="matched-quantity">—</strong></div>
+              <div><span id="clearing-price-label">Clearing price</span><strong id="clearing-price">—</strong></div>
+              <div><span id="matched-quantity-label">Matched quantity</span><strong id="matched-quantity">—</strong></div>
               <div><span>Order cutoff</span><strong id="room-cutoff">—</strong></div>
+            </div>
+            <div class="auction-preview-grid">
+              <div><span>Funded buy interest</span><strong id="funded-buy-interest">—</strong><small>active shares</small></div>
+              <div><span>Funded sell interest</span><strong id="funded-sell-interest">—</strong><small>active shares</small></div>
+              <div><span id="provisional-clearing-label">Provisional clear</span><strong id="provisional-clearing">—</strong><small id="provisional-clearing-note">program tie breaks</small></div>
+              <div><span id="provisional-matched-label">Provisional match</span><strong id="provisional-matched">—</strong><small id="provisional-matched-note">before cutoff</small></div>
+              <div><span id="remaining-imbalance-label">Remaining imbalance</span><strong id="remaining-imbalance">—</strong><small id="remaining-imbalance-note">eligible shares</small></div>
             </div>
             <div class="order-table-wrap">
               <table class="order-table">
