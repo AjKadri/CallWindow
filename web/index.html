@@ -4,25 +4,25 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#dff8f3" />
-    <meta name="description" content="A read-only PreStocks KALSHI market check beside a separate Solana devnet auction demo." />
+    <meta name="description" content="CallWindow schedules funded demo orders to meet at one transparent clearing price." />
     <link rel="icon" href="/assets/callwindow-symbol.svg" type="image/svg+xml" />
     <link rel="mask-icon" href="/assets/callwindow-symbol.svg" color="#151515" />
-    <title>CallWindow | Meet at the window</title>
     <link rel="stylesheet" href="/styles.css" />
+    <title>CallWindow | Scheduled settlement</title>
   </head>
   <body>
     <main class="site-frame" id="top">
       <header class="topbar">
-        <a class="brand" href="#top" aria-label="CallWindow home">
+        <a class="brand" href="/" aria-label="CallWindow home">
           <img class="brand-mark" src="/assets/callwindow-symbol.svg" alt="" aria-hidden="true" />
           <span class="brand-wordmark">CallWindow</span>
         </a>
         <button class="menu-button" type="button" aria-label="Toggle navigation" aria-expanded="false">☰</button>
         <nav class="nav-pill" aria-label="Main navigation">
-          <a href="#market">Market reference</a>
-          <a href="#auction">Auction</a>
-          <a href="#how-it-works">How it works</a>
-          <a class="nav-cta" href="#order-form">Fund an order</a>
+          <a aria-current="page" href="/">Home</a>
+          <a class="nav-cta" href="/demo/">Demo</a>
+          <a href="/proof/">Proof</a>
+          <a href="/docs/">Docs</a>
         </nav>
       </header>
 
@@ -30,199 +30,87 @@
         <div class="hero-copy">
           <p class="eyebrow">Scheduled settlement for patient markets</p>
           <h1>Meet at one <em>transparent price</em>.</h1>
-          <p class="hero-subtitle">CallWindow puts a read-only PreStocks market reference beside a separate bounded auction demo built for Solana devnet.</p>
+          <p class="hero-subtitle">CallWindow gives sparse buy and sell interest a known cutoff. Compatible funded orders can then meet at one disclosed clearing price.</p>
           <div class="actions">
-            <a class="button primary" href="#auction">See the auction example <span aria-hidden="true">↗</span></a>
-            <a class="button" href="#market">Review the market reference <span aria-hidden="true">↓</span></a>
+            <a class="button primary" href="/demo/">Open the working demo <span aria-hidden="true">↗</span></a>
+            <a class="button" href="#how-it-works">How the window works <span aria-hidden="true">↓</span></a>
           </div>
         </div>
-        <div class="hero-visual" aria-label="CallWindow proof preview">
+        <div class="hero-visual" aria-label="Illustrative CallWindow auction example">
           <div class="window-card">
-            <div class="window-card-top"><span class="status-dot">Public devnet proof</span><a href="https://explorer.solana.com/tx/3tMh5qoya4y1JJZC8K85wZzHP12tok8T2CtjPbTHNe8L3cu6L68xD1vNohaq3AzoVZt7qdwzXekJVqbXsUPoBiFm?cluster=devnet" target="_blank" rel="noreferrer">Explorer ↗</a></div>
+            <div class="window-card-top"><span class="status-dot">Illustrative example</span><span>Not a live order</span></div>
             <h2 class="window-title">Funded limits meet at cutoff</h2>
-            <p class="window-price">One shared price <small>after orders close</small></p>
-            <div class="mini-row"><span>Demo assets</span><strong>DEMO-EQUITY + DEMO-USD</strong></div>
-            <div class="mini-row"><span>Verified flow</span><strong>Claims and refunds finalized</strong></div>
+            <p class="window-price">One shared price <small>after the window closes</small></p>
+            <div class="mini-row"><span>Buy limit</span><strong>5.00 DEMO-EQUITY</strong></div>
+            <div class="mini-row"><span>Sell limit</span><strong>3.00 DEMO-EQUITY</strong></div>
           </div>
         </div>
       </section>
 
       <section class="proof-strip" aria-label="CallWindow principles">
-        <div class="proof-item"><strong>One shared moment</strong><span>Orders meet when the window closes.</span></div>
-        <div class="proof-item"><strong>One clear price</strong><span>Compatible orders fill at the same clearing price.</span></div>
-        <div class="proof-item"><strong>One visible outcome</strong><span>Filled, partly filled, or refunded with a finalized record.</span></div>
+        <div class="proof-item"><strong>One shared moment</strong><span>Orders meet when the scheduled window closes.</span></div>
+        <div class="proof-item"><strong>One clear price</strong><span>Compatible orders use one deterministic clearing price.</span></div>
+        <div class="proof-item"><strong>One visible outcome</strong><span>Filled, partly filled, or refunded with a record.</span></div>
       </section>
 
-      <section id="market" class="market-section section-shell">
-        <div class="section-heading">
-          <div>
-            <p class="eyebrow">Solana mainnet · read-only</p>
-            <h2>PreStocks KALSHI market case</h2>
-          </div>
-          <span class="network-tag network-mainnet"><span></span>Mainnet data</span>
+      <section class="home-section" id="how-it-works">
+        <div class="page-heading home-heading">
+          <p class="section-kicker">The scheduled cross</p>
+          <h2>Give sparse interest a known moment to meet.</h2>
+          <p>In an infrequent market, buy and sell interest may not appear at the same instant. CallWindow lets patient users submit funded limits before a cutoff, then compares the compatible orders together.</p>
         </div>
-
-        <div class="market-grid">
-          <article class="panel route-card issuer-panel">
-            <div class="panel-topline">
-              <div>
-                <p class="eyebrow">Official PreStocks record</p>
-                <h3 id="market-name">Loading market record…</h3>
-              </div>
-              <span class="ticker-badge">KALSHI</span>
-            </div>
-            <p id="market-description" class="record-description">The official record is checked against one approved mainnet mint.</p>
-            <div class="metrics-grid">
-              <div class="metric"><span>Mark price</span><strong id="mark-price">—</strong><small>Issuer-reported</small></div>
-              <div class="metric"><span>Token price</span><strong id="token-price">—</strong><small>Issuer-reported</small></div>
-              <div class="metric"><span>Supply</span><strong id="token-supply">—</strong><small>Issuer-reported</small></div>
-            </div>
-            <div class="mint-row">
-              <span>Approved mint</span>
-              <code id="kalshi-mint">PreLWGkkeqG1s4HEfFZSy9moCrJ7btsHuUtfcCeoRua</code>
-              <button id="copy-mint" class="copy-button" type="button">Copy</button>
-            </div>
-            <div class="source-line">
-              <span>Retrieved <time id="market-time">—</time></span>
-              <span>Source <a href="https://prestocks.com/api/prestocks" target="_blank" rel="noreferrer">PreStocks API</a> · <a href="https://prestocks.com/kalshi" target="_blank" rel="noreferrer">issuer page</a></span>
-            </div>
-            <p id="market-error" class="inline-error" hidden></p>
-            <p class="disclosure">PreStocks describes these tokens as economic exposure. They do not convey ownership, voting, or dividend rights, and secondary liquidity is not guaranteed. See the <a href="https://prestocks.com/kalshi" target="_blank" rel="noreferrer">issuer disclosure</a>.</p>
+        <div class="compact-board" aria-label="Illustrative auction example">
+          <article class="example-card example-buy">
+            <span class="example-label">Funded buy limit</span>
+            <strong>5.00 DEMO-EQUITY</strong>
+            <p>Up to 20.10 DEMO-USD per share</p>
+            <small>100.50 DEMO-USD escrowed</small>
           </article>
+          <div class="example-bridge"><span>At cutoff</span><strong>20.00 DEMO-USD</strong><small>One shared clearing price</small></div>
+          <article class="example-card example-sell">
+            <span class="example-label">Funded sell limit</span>
+            <strong>3.00 DEMO-EQUITY</strong>
+            <p>From 19.90 DEMO-USD per share</p>
+            <small>3.00 DEMO-EQUITY escrowed</small>
+          </article>
+        </div>
+        <div class="compact-outcomes">
+          <div><span>Matched</span><strong>3.00 DEMO-EQUITY</strong></div>
+          <div><span>Buyer pays</span><strong>60.00 DEMO-USD</strong></div>
+          <div><span>Buyer refund</span><strong>40.50 DEMO-USD</strong></div>
+        </div>
+        <p class="section-caption">Illustrative math only. Waiting is the tradeoff: there is no guaranteed fill and no promise of better execution.</p>
+      </section>
 
-          <article class="panel route-card quote-panel">
-            <div class="panel-topline">
-              <div>
-                <p class="eyebrow">Indicative route check</p>
-                <h3>What does a route quote?</h3>
-              </div>
-              <span class="read-only-tag">No signing</span>
-            </div>
-            <p class="panel-copy">A fresh Jupiter quote for the exact mint and input size you choose. The request has no wallet taker and cannot submit a swap.</p>
-            <form id="quote-form" class="quote-form">
-              <label for="quote-direction">Direction</label>
-              <select id="quote-direction" name="side">
-                <option value="buy">Buy KALSHI with USDC</option>
-                <option value="sell">Sell KALSHI for USDC</option>
-              </select>
-              <label id="quote-amount-label" for="quote-amount">USDC input size</label>
-              <div class="amount-input-wrap"><input id="quote-amount" name="amount" type="number" min="0.01" step="0.01" value="100" required /><span id="quote-unit">USDC</span></div>
-              <button id="check-quote" class="button button-dark button-full" type="submit">Check exact-mint quote</button>
-            </form>
-            <div id="quote-result" class="quote-result" aria-live="polite" aria-atomic="true">
-              <p class="empty-state">Choose a direction and size to request a live read-only quote.</p>
-            </div>
-              <p class="quote-caveat">Indicative only. A route quote does not establish fillability, eligibility, execution, or auction benefit.</p>
+      <section class="home-section home-tradeoff">
+        <div class="tradeoff-grid">
+          <article>
+            <span class="section-kicker">Choose speed</span>
+            <h3>Trade immediately when timing matters.</h3>
+            <p>An immediate route may suit someone who needs to act now or prefers not to wait for a scheduled window.</p>
+          </article>
+          <article class="tradeoff-card">
+            <span class="section-kicker">Choose patience</span>
+            <h3>Wait when a specific limit matters.</h3>
+            <p>Submit before the known cutoff and let compatible interest meet. The order may fill, partly fill, or remain unmatched.</p>
           </article>
         </div>
       </section>
 
-      <section id="auction" class="section auction-section">
-        <div class="section-shell">
-          <div class="section-heading section-heading-light">
-            <div>
-              <p class="eyebrow">Solana devnet · test transactions</p>
-              <h2>One price, funded before cutoff</h2>
-            </div>
-            <span class="network-tag network-devnet"><span></span>Devnet only</span>
-          </div>
-
-          <div class="asset-warning">
-            <div class="asset-symbols" aria-hidden="true"><span>DE</span><span>DU</span></div>
-            <div>
-              <strong>DEMO-EQUITY and DEMO-USD</strong>
-              <p>Plain test assets with no equity backing, no PreStocks asset or value, and no connection to the KALSHI market data above.</p>
-            </div>
-          </div>
-
-          <div class="evidence-grid" aria-label="Verified public devnet proof">
-            <div class="evidence-item"><strong>Public devnet program</strong><span>Executable program deployed at GxX6X6zZSQSuxEoTHPwaAmKCcpGRVRiB6ERANHzS7Eq9.</span><a href="https://explorer.solana.com/tx/5sXQmpydTLYg1GFujUT4B7e9UupZTGiWzjuDtqmEz1MNVrRCenLK7CVBFDz2G1yiApZmtWKgBmmreuA7Zb5HaQs?cluster=devnet" target="_blank" rel="noreferrer">View deployment transaction ↗</a></div>
-            <div class="evidence-item public"><strong>Matched close</strong><span>30,098 compute units, 5,000 lamports, finalized on devnet.</span><a href="https://explorer.solana.com/tx/3tMh5qoya4y1JJZC8K85wZzHP12tok8T2CtjPbTHNe8L3cu6L68xD1vNohaq3AzoVZt7qdwzXekJVqbXsUPoBiFm?cluster=devnet" target="_blank" rel="noreferrer">Open Explorer proof ↗</a></div>
-            <div class="evidence-item public"><strong>Bounded maximum close</strong><span>32 orders and 101 ticks consumed 88,875 compute units, with zero final vault balances.</span><a href="https://explorer.solana.com/tx/3MfJ6HnuJdFFEELhRLXwKMEdkb3mJtCEMGaN94BMvcEFLsUJCbUpY3oPJGy1ND5acr8pCg8ye1NFNFiwZmoYLQEq?cluster=devnet" target="_blank" rel="noreferrer">Open Explorer proof ↗</a></div>
-          </div>
-
-          <div class="auction-layout">
-            <article class="panel auction-book-panel">
-              <div class="panel-topline">
-                <div>
-                  <p class="eyebrow">Current devnet auction</p>
-                  <h3 id="auction-status">Loading auction…</h3>
-                </div>
-                <button id="refresh-auction" class="button button-outline" type="button">Refresh state</button>
-              </div>
-              <p id="auction-summary" class="panel-copy">On-chain orders, balances, and clearing state load from the devnet program.</p>
-              <div class="auction-facts">
-                <div><span>Candidate prices</span><strong id="candidate-range">—</strong></div>
-                <div><span>Opening reference</span><strong id="opening-reference">—</strong></div>
-                <div><span>Uniform clearing price</span><strong id="clearing-price">—</strong></div>
-                <div><span>Matched quantity</span><strong id="matched-quantity">—</strong></div>
-              </div>
-              <p id="devnet-error" class="inline-error" hidden></p>
-              <div class="order-table-wrap">
-                <table class="order-table">
-                  <thead><tr><th>Side</th><th>Limit</th><th>Quantity</th><th>Filled</th><th>State</th><th>Action</th></tr></thead>
-                  <tbody id="order-rows"><tr><td colspan="6" class="empty-table">No devnet auction loaded.</td></tr></tbody>
-                </table>
-              </div>
-              <div id="auction-actions" class="auction-actions" hidden>
-                <button id="close-auction" class="button button-dark" type="button" hidden>Close window</button>
-                <button id="abort-auction" class="button button-danger" type="button" hidden>Abort and refund</button>
-                <p id="action-note" class="action-note"></p>
-              </div>
-            </article>
-
-            <aside class="panel order-panel">
-              <div class="panel-topline">
-                <div><p class="eyebrow">Wallet action</p><h3>Fund a limit order</h3></div>
-                <span class="read-only-tag read-only-devnet">Devnet only</span>
-              </div>
-              <p class="panel-copy">Connect a wallet on devnet. Your wallet reviews and signs each test transaction.</p>
-              <button id="connect-wallet" class="button button-outline button-full" type="button">Connect devnet wallet</button>
-              <p id="wallet-status" class="wallet-status">No wallet connected.</p>
-              <form id="order-form" class="order-form">
-                <label for="order-side">I want to</label>
-                <select id="order-side" name="side"><option value="buy">Buy DEMO-EQUITY with DEMO-USD</option><option value="sell">Sell DEMO-EQUITY for DEMO-USD</option></select>
-                <label for="order-limit">Limit price per share</label>
-                <div class="amount-input-wrap"><input id="order-limit" name="limit" type="number" min="19.50" max="20.50" step="0.01" value="20.00" required /><span>USD</span></div>
-                <label for="order-quantity">Share quantity</label>
-                <div class="amount-input-wrap"><input id="order-quantity" name="quantity" type="number" min="0.01" max="100" step="0.01" value="1.50" required /><span>shares</span></div>
-                <p id="escrow-estimate" class="escrow-estimate">Buy orders escrow the full limit value. Sell orders escrow the full share quantity.</p>
-                <button id="submit-order" class="button button-light button-full" type="submit" disabled>Connect wallet to continue</button>
-              </form>
-            </aside>
-          </div>
-
-          <div class="proof-strip">
-            <div><p class="eyebrow">Finalized devnet proof</p><h3>Check each transaction and close cost</h3></div>
-            <div id="devnet-proof" class="proof-content"><p>Verified proof links are listed above. Wallet actions will add their finalized signatures here.</p></div>
-          </div>
+      <section class="home-cta" aria-label="Open the CallWindow demo">
+        <div>
+          <p class="section-kicker">Ready to inspect the record?</p>
+          <h2>Review the live reference and demo auction.</h2>
+          <p>The Demo page keeps the read-only KALSHI route separate from the devnet test-asset transactions.</p>
         </div>
+        <a class="button primary" href="/demo/">Open Demo <span aria-hidden="true">↗</span></a>
       </section>
 
-      <section id="how-it-works" class="rules-section section-shell">
-        <p class="eyebrow">Bounded clearing rules</p>
-        <h2>One cutoff, one disclosed method</h2>
-        <div class="rules-grid">
-          <div><span class="rule-number">01</span><h3>Funded limits</h3><p>Buyers escrow their maximum payment. Sellers escrow their full DEMO-EQUITY quantity. Orders can be cancelled and refunded before cutoff.</p></div>
-          <div><span class="rule-number">02</span><h3>One capped scan</h3><p>The program accepts at most 32 orders and 101 consecutive one-cent candidate prices. The opening reference is a disclosed test input.</p></div>
-          <div><span class="rule-number">03</span><h3>Deterministic price</h3><p>Maximize matched quantity, then minimize imbalance, then choose the nearest opening reference, then the lower price.</p></div>
-          <div><span class="rule-number">04</span><h3>Claims or refunds</h3><p>Filled orders settle at one price. Unfilled balances are claimable. Failed clearing halts to refunds; a permissionless abort opens after 30 minutes.</p></div>
-        </div>
-      </section>
-      <section class="closing" aria-label="CallWindow design preview">
-        <div class="closing-card">
-          <img src="/assets/callwindow-header-screenshot.svg" alt="CallWindow auction interface preview showing a verified devnet example" />
-          <div class="closing-content">
-            <p class="eyebrow">Verified route boundary</p>
-            <h2>See the route before you <em>fund</em>.</h2>
-            <p>Inspect the read-only KALSHI reference, then use the separate demo auction with named test assets and public proof links.</p>
-            <div class="actions"><a class="button primary" href="#auction">Review the auction controls <span aria-hidden="true">↗</span></a></div>
-          </div>
-        </div>
-      </section>
-
-      <footer class="footer"><a class="brand" href="#top"><img class="brand-mark" src="/assets/callwindow-symbol.svg" alt="" aria-hidden="true" /><span class="brand-wordmark">CallWindow</span></a><span>Localnet and public devnet prove the bounded demo. KALSHI remains a read-only mainnet reference.</span></footer>
+      <footer class="footer">
+        <a class="brand" href="/"><img class="brand-mark" src="/assets/callwindow-symbol.svg" alt="" aria-hidden="true" /><span class="brand-wordmark">CallWindow</span></a>
+        <nav class="footer-links" aria-label="Footer navigation"><a href="/demo/">Demo</a><a href="/proof/">Proof</a><a href="/docs/">Docs</a></nav>
+      </footer>
     </main>
-    <script type="module" src="/app.js"></script>
+    <script type="module" src="/navigation.js"></script>
   </body>
 </html>

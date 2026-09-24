@@ -1,3 +1,4 @@
+import path from "node:path";
 import { defineConfig } from "vite";
 
 export default defineConfig({
@@ -12,5 +13,13 @@ export default defineConfig({
   build: {
     outDir: "../dist",
     emptyOutDir: true,
+    rollupOptions: {
+      input: {
+        home: path.resolve("web/index.html"),
+        demo: path.resolve("web/demo/index.html"),
+        proof: path.resolve("web/proof/index.html"),
+        docs: path.resolve("web/docs/index.html"),
+      },
+    },
   },
 });

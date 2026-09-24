@@ -46,14 +46,14 @@ async function serveStatic(response, pathname) {
     return;
   }
   const relativePath = requestedPath === "/" ? "index.html" : requestedPath.slice(1);
-  const absolutePath = path.resolve(WEB_ROOT, relativePath);
+  let absolutePath = path.resolve(WEB_ROOT, relativePath);
   if (absolutePath !== WEB_ROOT && !absolutePath.startsWith(`${WEB_ROOT}${path.sep}`)) {
     response.writeHead(403).end();
     return;
   }
   try {
     const fileInfo = await stat(absolutePath);
-    if (!fileInfo.isFile()) throw new Error("not a file");
+    if (fileInfo.isDirectory()) absolutePath = path.join(absolutePath, "index.html");
     const body = await readFile(absolutePath);
     response.writeHead(200, {
       "content-type": MIME.get(path.extname(absolutePath)) ?? "application/octet-stream",

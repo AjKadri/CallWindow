@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#dff8f3" />
+    <meta name="description" content="CallWindow method notes: cutoff, funded limits, deterministic clearing, claims, refunds, and bounds." />
+    <link rel="icon" href="/assets/callwindow-symbol.svg" type="image/svg+xml" />
+    <link rel="mask-icon" href="/assets/callwindow-symbol.svg" color="#151515" />
+    <link rel="stylesheet" href="/styles.css" />
+    <title>CallWindow Docs | Method and boundaries</title>
+  </head>
+  <body>
+    <main class="site-frame" id="top">
+      <header class="topbar">
+        <a class="brand" href="/" aria-label="CallWindow home">
+          <img class="brand-mark" src="/assets/callwindow-symbol.svg" alt="" aria-hidden="true" />
+          <span class="brand-wordmark">CallWindow</span>
+        </a>
+        <button class="menu-button" type="button" aria-label="Toggle navigation" aria-expanded="false">☰</button>
+        <nav class="nav-pill" aria-label="Main navigation">
+          <a href="/">Home</a>
+          <a class="nav-cta" href="/demo/">Demo</a>
+          <a href="/proof/">Proof</a>
+          <a aria-current="page" href="/docs/">Docs</a>
+        </nav>
+      </header>
+
+      <section class="page-hero">
+        <p class="section-kicker">Method and boundaries</p>
+        <h1>One cutoff, one disclosed clearing method.</h1>
+        <p>CallWindow is a bounded uniform-price auction demo. The rules below describe what the program accepts, how it chooses a price, and what happens to funded balances after close.</p>
+        <div class="page-hero-links"><a class="text-link" href="/demo/">Open the working demo ↗</a><a class="text-link" href="/proof/">Read the proof ↓</a></div>
+      </section>
+
+      <section class="docs-section">
+        <div class="docs-grid">
+          <article class="doc-card"><span class="doc-number">01</span><h2>Cutoff</h2><p>Each auction has a disclosed cutoff timestamp. Orders can be placed while the window is open. After cutoff, no new funded order is accepted.</p></article>
+          <article class="doc-card"><span class="doc-number">02</span><h2>Funded limits</h2><p>A buy order escrows its maximum payment in DEMO-USD. A sell order escrows its full DEMO-EQUITY quantity before it can participate.</p></article>
+          <article class="doc-card"><span class="doc-number">03</span><h2>Clearing</h2><p>At close, the program scans the candidate price grid and maximizes matched quantity. Compatible orders settle at one uniform clearing price.</p></article>
+          <article class="doc-card"><span class="doc-number">04</span><h2>Tie breaks</h2><p>If several prices match the same quantity, the method minimizes imbalance, chooses the price nearest the opening reference, then chooses the lower price.</p></article>
+          <article class="doc-card"><span class="doc-number">05</span><h2>Cancellation</h2><p>An order owner can cancel an active order before cutoff. The escrowed demo balance is returned through the program’s cancellation path.</p></article>
+          <article class="doc-card"><span class="doc-number">06</span><h2>Partial fills</h2><p>When available quantity is smaller than an order, the order can fill partially. The filled amount settles at the clearing price and the remainder is claimable.</p></article>
+          <article class="doc-card"><span class="doc-number">07</span><h2>Claims and refunds</h2><p>After a successful close, owners claim filled proceeds and any unfilled remainder. A no-cross or failed clearing path returns the escrow through refunds.</p></article>
+          <article class="doc-card"><span class="doc-number">08</span><h2>Bounds</h2><p>The program accepts at most 32 funded orders and 101 contiguous one-cent candidate ticks. The tested worst-case comparison bound is 7,520.</p></article>
+        </div>
+      </section>
+
+      <section class="docs-section docs-tinted">
+        <div class="page-heading">
+          <p class="section-kicker">Assets and scope</p>
+          <h2>The demo tokens are deliberately generic.</h2>
+          <p><strong>DEMO-EQUITY</strong> and <strong>DEMO-USD</strong> are Solana test assets with no equity backing, no company ownership, and no connection to the KALSHI mint. The KALSHI reference and Jupiter route check remain read-only mainnet observations and are never used as auction assets.</p>
+        </div>
+        <div class="docs-scope-grid">
+          <div><span>Demo base asset</span><code>B6ZoEr92PB58bN1MgTXwjZHBUxCZ895ERVdhFJtSQFcP</code></div>
+          <div><span>Demo quote asset</span><code>7gLQ8vdtYTxbHa4YK9gjjsVe49WiKeH6pi2pV8us8zd4</code></div>
+          <div><span>Read-only mainnet mint</span><code>PreLWGkkeqG1s4HEfFZSy9moCrJ7btsHuUtfcCeoRua</code></div>
+        </div>
+      </section>
+
+      <section class="docs-section docs-cta">
+        <div><p class="section-kicker">Next step</p><h2>See each state in the working surface.</h2><p>The Demo page keeps live data, unavailable states, devnet state, wallet actions, and finalized proof links in one place.</p></div>
+        <a class="button primary" href="/demo/">Open Demo <span aria-hidden="true">↗</span></a>
+      </section>
+
+      <footer class="footer">
+        <a class="brand" href="/"><img class="brand-mark" src="/assets/callwindow-symbol.svg" alt="" aria-hidden="true" /><span class="brand-wordmark">CallWindow</span></a>
+        <nav class="footer-links" aria-label="Footer navigation"><a href="/">Home</a><a href="/demo/">Demo</a><a href="/proof/">Proof</a></nav>
+      </footer>
+    </main>
+    <script type="module" src="/navigation.js"></script>
+  </body>
+</html>
