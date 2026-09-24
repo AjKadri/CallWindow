@@ -29,7 +29,7 @@
       <section class="page-hero">
         <p class="section-kicker">Method and boundaries</p>
         <h1>One cutoff, one disclosed clearing method.</h1>
-        <p>CallWindow is a bounded uniform-price auction demo. The rules below describe what the program accepts, how it chooses a price, and what happens to funded balances after close.</p>
+        <p>CallWindow is a bounded uniform-price auction demo with a separate read-only PreStocks market chooser. The rules below describe what the devnet program accepts, how it chooses a price, and what happens to funded balances after close.</p>
         <div class="page-hero-links"><a class="text-link" href="/demo/">Open the working demo ↗</a><a class="text-link" href="/proof/">Read the proof ↓</a></div>
       </section>
 
@@ -50,7 +50,7 @@
         <div class="page-heading">
           <p class="section-kicker">Assets and scope</p>
           <h2>The demo tokens are deliberately generic.</h2>
-          <p><strong>DEMO-EQUITY</strong> and <strong>DEMO-USD</strong> are Solana test assets with no equity backing, no company ownership, and no connection to the KALSHI mint. The KALSHI reference and Jupiter route check remain read-only mainnet observations and are never used as auction assets.</p>
+          <p><strong>DEMO-EQUITY</strong> and <strong>DEMO-USD</strong> are Solana test assets with no equity backing, no company ownership, and no connection to KALSHI or any other PreStocks product. The Demo chooser reads official PreStocks records and requests no-taker mainnet quotes for the selected exact mint. Those observations remain read-only and are never used as auction assets.</p>
         </div>
         <div class="docs-scope-grid">
           <div><span>Demo base asset</span><code>B6ZoEr92PB58bN1MgTXwjZHBUxCZ895ERVdhFJtSQFcP</code></div>

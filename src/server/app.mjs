@@ -3,7 +3,7 @@ import { readFile, stat } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { getKalshiQuote, getKalshiRecord } from "./market.mjs";
+import { getPreStocksCatalog, getPreStocksQuote } from "./market.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const WEB_ROOT = existsSync(path.join(ROOT, "dist", "index.html"))
@@ -73,22 +73,25 @@ export function createCallWindowServer({ fetchImpl = fetch } = {}) {
     }
     const url = new URL(request.url ?? "/", "http://127.0.0.1");
     if (url.pathname === "/api/market") {
-      sendJson(response, 200, await getKalshiRecord(fetchImpl));
+      sendJson(response, 200, await getPreStocksCatalog(fetchImpl));
       return;
     }
     if (url.pathname === "/api/quote") {
       const side = url.searchParams.get("side");
       const amount = url.searchParams.get("amount");
-      if (!side || !amount) {
+      const symbol = url.searchParams.get("symbol");
+      const mint = url.searchParams.get("mint");
+      if (!side || !amount || !symbol || !mint) {
         sendJson(response, 400, {
           status: "unavailable",
           source: "https://api.jup.ag/swap/v2/order",
           observedAt: new Date().toISOString(),
-          reason: "Provide a quote direction and input size",
+          reason: "Provide a verified product symbol, mint, quote direction, and input size",
+          failureType: "invalid-input",
         });
         return;
       }
-      sendJson(response, 200, await getKalshiQuote({ side, amount }, { fetchImpl }));
+      sendJson(response, 200, await getPreStocksQuote({ symbol, mint, side, amount }, { fetchImpl }));
       return;
     }
     if (url.pathname === "/api/devnet") {

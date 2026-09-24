@@ -3,6 +3,8 @@ import test from "node:test";
 import {
   getKalshiQuote,
   getKalshiRecord,
+  getPreStocksCatalog,
+  getPreStocksQuote,
   JUPITER_ORDER,
   KALSHI_MINT,
   MAINNET_RPC,
@@ -39,7 +41,11 @@ function fakeMarketFetch({ record = kalshiRecord, decimals = 9, quoteStatus = 20
       return jsonResponse({ result: { value: { decimals } } });
     }
     if (url.href.startsWith(JUPITER_ORDER)) {
-      return jsonResponse(quote, quoteStatus);
+      return jsonResponse({
+        ...quote,
+        inputMint: quote.inputMint ?? url.searchParams.get("inputMint"),
+        outputMint: quote.outputMint ?? url.searchParams.get("outputMint"),
+      }, quoteStatus);
     }
     throw new Error(`Unexpected request ${url.href}`);
   };
@@ -54,6 +60,60 @@ test("official PreStocks KALSHI record requires the approved exact mint", async 
   assert.equal(result.record.mint, KALSHI_MINT);
   assert.equal(result.source, PRESTOCKS_API);
   assert.ok(Number.isFinite(Date.parse(result.observedAt)));
+});
+
+test("catalog exposes verified official products without demo assets", async () => {
+  const catalog = await getPreStocksCatalog(fakeMarketFetch().fetchImpl);
+  assert.equal(catalog.status, "available");
+  assert.equal(catalog.products[0].symbol, "KALSHI");
+  assert.equal(catalog.products[0].mint, KALSHI_MINT);
+  assert.equal(catalog.products[0].issuerUrl, "https://prestocks.com/kalshi");
+  assert.notEqual(catalog.products[0].mint, "B6ZoEr92PB58bN1MgTXwjZHBUxCZ895ERVdhFJtSQFcP");
+});
+
+test("selected symbol and mint must match the current official record", async () => {
+  const { fetchImpl, requests } = fakeMarketFetch();
+  const result = await getPreStocksQuote({
+    symbol: "KALSHI",
+    mint: "B6ZoEr92PB58bN1MgTXwjZHBUxCZ895ERVdhFJtSQFcP",
+    side: "buy",
+    amount: "100",
+  }, { fetchImpl, apiKey: "secret-not-printed" });
+  assert.equal(result.status, "unavailable");
+  assert.equal(result.failureType, "market-validation");
+  assert.match(result.reason, /did not match the official KALSHI record/);
+  assert.equal(requests.some(({ url }) => url.href.startsWith(JUPITER_ORDER)), false);
+});
+
+test("switching products binds the selected mint and preserves decimals", async () => {
+  const alternateRecord = {
+    ...kalshiRecord,
+    name: "Anduril PreStocks",
+    symbol: "ANDURIL",
+    contract_address: "PresTj4Yc2bAR197Er7wz4UUKSfqt6FryBEdAriBoQB",
+    external_url: "https://prestocks.com/anduril",
+  };
+  const { fetchImpl, requests } = fakeMarketFetch({
+    record: alternateRecord,
+    decimals: 6,
+    quote: { transaction: null, inAmount: "100000000", outAmount: "640000000", router: "metis" },
+  });
+  const result = await getPreStocksQuote({
+    symbol: "ANDURIL",
+    mint: alternateRecord.contract_address,
+    side: "buy",
+    amount: "100",
+  }, { fetchImpl, apiKey: "secret-not-printed" });
+  assert.equal(result.status, "available");
+  assert.equal(result.symbol, "ANDURIL");
+  assert.equal(result.inputDecimals, 6);
+  assert.equal(result.outputDecimals, 6);
+  assert.equal(result.outputAmount, "640");
+  assert.equal(result.inputMint, USDC_MINT);
+  assert.equal(result.outputMint, alternateRecord.contract_address);
+  const request = requests.find(({ url }) => url.href.startsWith(JUPITER_ORDER));
+  assert.equal(request.url.searchParams.get("outputMint"), alternateRecord.contract_address);
+  assert.equal(request.init.headers["x-api-key"], "secret-not-printed");
 });
 
 test("missing or substituted KALSHI records fail closed", async () => {
@@ -101,7 +161,7 @@ test("buy quote uses fixed USDC and exact KALSHI mints without a taker", async (
   assert.equal(request.url.searchParams.get("outputMint"), KALSHI_MINT);
   assert.equal(request.url.searchParams.get("amount"), "100000000");
   assert.equal(request.url.searchParams.has("taker"), false);
-  assert.equal(requests.some(({ url }) => url.href === PRESTOCKS_API), false);
+  assert.equal(requests.some(({ url }) => url.href === PRESTOCKS_API), true);
   assert.equal(request.init.headers?.["x-api-key"], undefined);
 });
 
@@ -133,7 +193,7 @@ test("quote is unavailable when exact mint decimals cannot be verified", async (
     { fetchImpl: fakeMarketFetch({ decimals: null }).fetchImpl, apiKey: "" },
   );
   assert.equal(result.status, "unavailable");
-  assert.match(result.reason, /valid KALSHI mint decimals/);
+  assert.match(result.reason, /valid selected mint decimals/);
 });
 
 test("Jupiter authorization and rate-limit failures stay visible as unavailable", async () => {
@@ -158,7 +218,16 @@ test("Jupiter authorization and rate-limit failures stay visible as unavailable"
 test("quote network failures keep attempted size and direction visible", async () => {
   const result = await getKalshiQuote(
     { side: "sell", amount: "1.25" },
-    { fetchImpl: async () => { throw new Error("network timeout"); }, apiKey: "" },
+    {
+      fetchImpl: async (input) => {
+        const url = new URL(input);
+        if (url.href === PRESTOCKS_API) return jsonResponse([kalshiRecord]);
+        if (url.origin === new URL(MAINNET_RPC).origin) return jsonResponse({ result: { value: { decimals: 9 } } });
+        if (url.href.startsWith(JUPITER_ORDER)) throw new Error("network timeout");
+        throw new Error(`Unexpected request ${url.href}`);
+      },
+      apiKey: "",
+    },
   );
   assert.equal(result.status, "unavailable");
   assert.equal(result.direction, "sell");
@@ -166,6 +235,54 @@ test("quote network failures keep attempted size and direction visible", async (
   assert.equal(result.inputMint, KALSHI_MINT);
   assert.equal(result.outputMint, USDC_MINT);
   assert.match(result.reason, /network timeout/);
+});
+
+test("unavailable quotes distinguish no-route responses from timeouts", async () => {
+  const noRoute = await getPreStocksQuote(
+    { symbol: "KALSHI", mint: KALSHI_MINT, side: "buy", amount: "100" },
+    { fetchImpl: fakeMarketFetch({ quoteStatus: 400, quote: { error: "No route found for this pair" } }).fetchImpl, apiKey: "" },
+  );
+  assert.equal(noRoute.status, "unavailable");
+  assert.equal(noRoute.failureType, "no-route");
+
+  const timeoutFetch = async (input, init = {}) => {
+    const url = new URL(input);
+    if (url.href === PRESTOCKS_API) return jsonResponse([kalshiRecord]);
+    if (url.origin === new URL(MAINNET_RPC).origin) return jsonResponse({ result: { value: { decimals: 9 } } });
+    if (url.href.startsWith(JUPITER_ORDER)) {
+      const error = new Error("upstream timeout");
+      error.name = "TimeoutError";
+      throw error;
+    }
+    throw new Error(`Unexpected request ${url.href}`);
+  };
+  const timeout = await getPreStocksQuote(
+    { symbol: "KALSHI", mint: KALSHI_MINT, side: "buy", amount: "100" },
+    { fetchImpl: timeoutFetch, apiKey: "" },
+  );
+  assert.equal(timeout.status, "unavailable");
+  assert.equal(timeout.failureType, "timeout");
+});
+
+test("Jupiter returned mints must match the selected product pair", async () => {
+  const result = await getPreStocksQuote(
+    { symbol: "KALSHI", mint: KALSHI_MINT, side: "buy", amount: "100" },
+    {
+      fetchImpl: fakeMarketFetch({
+        quote: {
+          transaction: null,
+          inAmount: "100000000",
+          outAmount: "115000000",
+          inputMint: USDC_MINT,
+          outputMint: "PresTj4Yc2bAR197Er7wz4UUKSfqt6FryBEdAriBoQB",
+        },
+      }).fetchImpl,
+      apiKey: "",
+    },
+  );
+  assert.equal(result.status, "unavailable");
+  assert.equal(result.failureType, "mint-mismatch");
+  assert.match(result.reason, /did not match the verified request/);
 });
 
 test("transaction-bearing or incomplete Jupiter responses are discarded", async () => {

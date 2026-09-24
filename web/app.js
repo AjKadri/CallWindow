@@ -10,7 +10,7 @@ const {
   getAssociatedTokenAddressSync,
 } = await import("@solana/spl-token");
 
-const KALSHI_MINT = "PreLWGkkeqG1s4HEfFZSy9moCrJ7btsHuUtfcCeoRua";
+const KALSHI_SYMBOL = "KALSHI";
 const DEVNET_RPC = "https://api.devnet.solana.com";
 const AUCTION_STATES = ["Open", "Closed · claims available", "Halted · refunds available", "Aborted · refunds available"];
 const ORDER_ACTIVE = 0;
@@ -22,6 +22,7 @@ const encoder = new TextEncoder();
 const $ = (id) => document.getElementById(id);
 const state = {
   market: null,
+  selectedMarket: null,
   quote: null,
   manifest: null,
   auction: null,
@@ -59,7 +60,8 @@ function compactKey(value) {
 }
 
 function mintName(mint) {
-  if (mint === KALSHI_MINT) return "KALSHI";
+  if (mint === state.selectedMarket?.mint) return state.selectedMarket.symbol;
+  if (mint === "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v") return "USDC";
   if (mint === state.manifest?.mints?.quote?.address) return "DEMO-USD";
   if (mint === state.manifest?.mints?.base?.address) return "DEMO-EQUITY";
   return compactKey(mint);
@@ -75,6 +77,57 @@ function clearError(element) {
   element.hidden = true;
 }
 
+function renderMarketRecord() {
+  const record = state.selectedMarket;
+  if (!record) return;
+  $("market-name").textContent = record.name;
+  $("market-description").textContent = record.description ?? "Official issuer data for the verified PreStocks record.";
+  $("market-symbol").textContent = record.symbol;
+  $("mark-price").textContent = formatDollars(record.markPrice);
+  $("token-price").textContent = formatDollars(record.tokenPrice);
+  $("token-supply").textContent = formatCount(record.supply);
+  $("selected-mint").textContent = record.mint;
+  $("market-time").textContent = isoTime(state.market.observedAt);
+  $("market-time").dateTime = state.market.observedAt ?? "";
+  $("market-issuer-link").href = record.issuerUrl;
+  $("market-disclosure-link").href = record.issuerUrl;
+  updateQuoteSizeControl();
+}
+
+function setMarketUnavailable(message) {
+  state.selectedMarket = null;
+  $("market-name").textContent = "PreStocks records unavailable";
+  $("market-description").textContent = "The official product list could not be verified.";
+  $("market-symbol").textContent = "unavailable";
+  $("mark-price").textContent = "unavailable";
+  $("token-price").textContent = "unavailable";
+  $("token-supply").textContent = "unavailable";
+  $("selected-mint").textContent = "unavailable";
+  $("market-time").textContent = isoTime(state.market?.observedAt);
+  $("market-issuer-link").removeAttribute("href");
+  $("market-disclosure-link").removeAttribute("href");
+  $("quote-form").querySelector("button").disabled = true;
+  setError($("market-error"), message);
+}
+
+function filterMarketOptions() {
+  const search = $("market-search").value.trim().toLowerCase();
+  for (const option of $("market-selector").options) {
+    option.hidden = Boolean(search) && !option.textContent.toLowerCase().includes(search);
+  }
+}
+
+function selectMarket(symbol) {
+  const record = state.market?.products?.find((product) => product.symbol === symbol);
+  if (!record) return;
+  state.selectedMarket = record;
+  $("market-selector").value = record.symbol;
+  state.quote = null;
+  clearError($("market-error"));
+  renderMarketRecord();
+  renderQuote();
+}
+
 async function loadMarket() {
   const error = $("market-error");
   clearError(error);
@@ -82,35 +135,23 @@ async function loadMarket() {
     const response = await fetch("/api/market", { cache: "no-store" });
     const market = await response.json();
     state.market = market;
-    $("market-time").textContent = isoTime(market.observedAt);
-    $("market-time").dateTime = market.observedAt ?? "";
     if (market.status !== "available") {
-      $("market-name").textContent = "KALSHI record unavailable";
-      $("market-description").textContent = "The official record did not pass exact-mint validation.";
-      $("mark-price").textContent = "unavailable";
-      $("token-price").textContent = "unavailable";
-      $("token-supply").textContent = "unavailable";
-      setError(error, market.reason ?? "The official PreStocks record could not be loaded.");
+      setMarketUnavailable(market.reason ?? "The official PreStocks records could not be loaded.");
       return;
     }
-    const record = market.record;
-    if (record.mint !== KALSHI_MINT) {
-      setError(error, "The returned KALSHI mint differed from the approved mint. Market fields were suppressed.");
-      return;
+    const selector = $("market-selector");
+    selector.replaceChildren();
+    for (const product of market.products) {
+      const option = document.createElement("option");
+      option.value = product.symbol;
+      option.textContent = `${product.symbol} · ${product.name}`;
+      selector.append(option);
     }
-    $("market-name").textContent = record.name ?? "KALSHI PreStocks";
-    $("market-description").textContent = record.description ?? "Official issuer data for the exact approved KALSHI mint.";
-    $("mark-price").textContent = formatDollars(record.markPrice);
-    $("token-price").textContent = formatDollars(record.tokenPrice);
-    $("token-supply").textContent = formatCount(record.supply);
-    $("kalshi-mint").textContent = record.mint;
+    selectMarket(market.products.some((product) => product.symbol === KALSHI_SYMBOL) ? KALSHI_SYMBOL : market.products[0].symbol);
+    filterMarketOptions();
   } catch (errorValue) {
-    $("market-name").textContent = "KALSHI record unavailable";
-    $("market-description").textContent = "The official record could not be refreshed.";
-    $("mark-price").textContent = "unavailable";
-    $("token-price").textContent = "unavailable";
-    $("token-supply").textContent = "unavailable";
-    setError(error, errorValue instanceof Error ? errorValue.message : "Market request failed.");
+    state.market = { observedAt: new Date().toISOString() };
+    setMarketUnavailable(errorValue instanceof Error ? errorValue.message : "Market request failed.");
   }
 }
 
@@ -140,8 +181,10 @@ function renderQuote() {
     reason.className = "empty-state";
     reason.textContent = quote.reason ?? "A route quote could not be obtained.";
     container.append(heading, reason, quoteDetails([
-      ["Direction", quote.direction === "buy" ? "Buy KALSHI with USDC" : quote.direction === "sell" ? "Sell KALSHI for USDC" : "unavailable"],
+      ["Direction", quote.direction === "buy" ? `Buy ${quote.symbol ?? "selected token"} with USDC` : quote.direction === "sell" ? `Sell ${quote.symbol ?? "selected token"} for USDC` : "unavailable"],
       ["Input size", `${quote.inputAmount || "unavailable"} ${quote.inputMint ? mintName(quote.inputMint) : ""}`.trim()],
+      ["Exact mint", quote.mint ?? "unavailable"],
+      ["Failure type", quote.failureType ?? "unavailable"],
       ["Observed", isoTime(quote.observedAt)],
       ["Age", `${quoteAgeSeconds() ?? 0} seconds`],
       ["Source", quote.source ?? "Jupiter Swap API v2"],
@@ -167,8 +210,11 @@ function renderQuote() {
     ? `${platformFeeAmount} ${mintName(quote.fees.platformFeeMint)}`
     : "not reported";
   const details = quoteDetails([
-    ["Direction", quote.direction === "buy" ? "USDC into exact KALSHI mint" : "Exact KALSHI mint into USDC"],
+    ["Direction", quote.direction === "buy" ? `USDC into exact ${quote.symbol} mint` : `Exact ${quote.symbol} mint into USDC`],
     ["Input size", `${quote.inputAmount} ${inputToken}`],
+    ["Output", `${quote.outputAmount} ${outputToken}`],
+    ["Effective price", `${formatDollars(quote.effectivePriceUsdPerToken)} per ${quote.symbol}`],
+    ["Exact mint", quote.mint ?? "unavailable"],
     ["Route", quote.route ?? "not reported"],
     ["Total fee rate", feeRate],
     ["Fee mint", feeMint],
@@ -201,8 +247,9 @@ function quoteDetails(rows) {
 
 function updateQuoteSizeControl() {
   const selling = $("quote-direction").value === "sell";
-  $("quote-amount-label").textContent = selling ? "KALSHI input size" : "USDC input size";
-  $("quote-unit").textContent = selling ? "KALSHI" : "USDC";
+  const symbol = state.selectedMarket?.symbol ?? "selected token";
+  $("quote-amount-label").textContent = selling ? `${symbol} input size` : "USDC input size";
+  $("quote-unit").textContent = selling ? symbol : "USDC";
   $("quote-amount").step = selling ? "0.000000001" : "0.01";
   $("quote-amount").min = selling ? "0.000000001" : "0.01";
   $("quote-amount").value = selling ? "1" : "100";
@@ -212,12 +259,14 @@ async function checkQuote(event) {
   event.preventDefault();
   const side = $("quote-direction").value;
   const amount = $("quote-amount").value;
+  const market = state.selectedMarket;
   const button = $("check-quote");
   button.disabled = true;
   button.textContent = "Requesting quote…";
-  $("quote-result").textContent = "Requesting a no-taker quote for the approved mint…";
+  $("quote-result").textContent = "Requesting a no-taker quote for the selected verified mint…";
   try {
-    const query = new URLSearchParams({ side, amount });
+    if (!market) throw new Error("Select a verified PreStocks product first.");
+    const query = new URLSearchParams({ symbol: market.symbol, mint: market.mint, side, amount });
     const response = await fetch(`/api/quote?${query}`, { cache: "no-store" });
     state.quote = await response.json();
     renderQuote();
@@ -806,7 +855,8 @@ async function abortAuction() {
 
 async function copyMint() {
   try {
-    await navigator.clipboard.writeText(KALSHI_MINT);
+    if (!state.selectedMarket) throw new Error("No verified product is selected.");
+    await navigator.clipboard.writeText(state.selectedMarket.mint);
     $("copy-mint").textContent = "Copied";
     setTimeout(() => { $("copy-mint").textContent = "Copy"; }, 1400);
   } catch {
@@ -815,6 +865,8 @@ async function copyMint() {
   }
 }
 
+$("market-search").addEventListener("input", filterMarketOptions);
+$("market-selector").addEventListener("change", (event) => selectMarket(event.target.value));
 $("quote-direction").addEventListener("change", updateQuoteSizeControl);
 $("quote-form").addEventListener("submit", checkQuote);
 $("copy-mint").addEventListener("click", copyMint);

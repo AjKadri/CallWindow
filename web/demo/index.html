@@ -4,11 +4,11 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#dff8f3" />
-    <meta name="description" content="Working CallWindow demo with a read-only KALSHI reference and separate Solana devnet test auction." />
+    <meta name="description" content="Working CallWindow demo with a read-only PreStocks market chooser and separate Solana devnet test auction." />
     <link rel="icon" href="/assets/callwindow-symbol.svg" type="image/svg+xml" />
     <link rel="mask-icon" href="/assets/callwindow-symbol.svg" color="#151515" />
     <link rel="stylesheet" href="/styles.css" />
-    <title>CallWindow Demo | Read-only market and devnet auction</title>
+    <title>CallWindow Demo | PreStocks chooser and devnet auction</title>
   </head>
   <body>
     <main class="site-frame" id="top">
@@ -37,7 +37,7 @@
         <div class="section-heading">
           <div>
             <p class="eyebrow">Solana mainnet · read-only</p>
-            <h2>PreStocks KALSHI market case</h2>
+            <h2>Choose a verified PreStocks market</h2>
           </div>
           <span class="network-tag network-mainnet"><span></span>Mainnet data</span>
         </div>
@@ -49,25 +49,32 @@
                 <p class="eyebrow">Official PreStocks record</p>
                 <h3 id="market-name">Loading market record…</h3>
               </div>
-              <span class="ticker-badge">KALSHI</span>
+              <span id="market-symbol" class="ticker-badge">—</span>
             </div>
-            <p id="market-description" class="record-description">The official record is checked against one approved mainnet mint.</p>
+            <p id="market-description" class="record-description">Choose from verified official records. The selected symbol and mint are checked again before every quote request.</p>
+            <div class="market-chooser">
+              <label for="market-search">Search products</label>
+              <input id="market-search" type="search" placeholder="Search symbol or issuer" autocomplete="off" />
+              <label for="market-selector">Verified product</label>
+              <select id="market-selector" aria-describedby="market-selection-note"><option value="">Loading verified products…</option></select>
+              <p id="market-selection-note" class="chooser-note">KALSHI is the default featured record from the bounded scan. This is not a liquidity ranking.</p>
+            </div>
             <div class="metrics-grid">
-              <div class="metric"><span>Mark price</span><strong id="mark-price">—</strong><small>Issuer-reported</small></div>
-              <div class="metric"><span>Token price</span><strong id="token-price">—</strong><small>Issuer-reported</small></div>
+              <div class="metric"><span>Mark price</span><strong id="mark-price">—</strong><small>Issuer-reported, not executable</small></div>
+              <div class="metric"><span>Token price</span><strong id="token-price">—</strong><small>Issuer-reported, not executable</small></div>
               <div class="metric"><span>Supply</span><strong id="token-supply">—</strong><small>Issuer-reported</small></div>
             </div>
             <div class="mint-row">
-              <span>Approved mint</span>
-              <code id="kalshi-mint">PreLWGkkeqG1s4HEfFZSy9moCrJ7btsHuUtfcCeoRua</code>
+              <span>Selected mint</span>
+              <code id="selected-mint">—</code>
               <button id="copy-mint" class="copy-button" type="button">Copy</button>
             </div>
             <div class="source-line">
               <span>Retrieved <time id="market-time">—</time></span>
-              <span>Source <a href="https://prestocks.com/api/prestocks" target="_blank" rel="noreferrer">PreStocks API</a> · <a href="https://prestocks.com/kalshi" target="_blank" rel="noreferrer">issuer page</a></span>
+              <span>Source <a id="market-source-link" href="https://prestocks.com/api/prestocks" target="_blank" rel="noreferrer">PreStocks API</a> · <a id="market-issuer-link" href="https://prestocks.com/kalshi" target="_blank" rel="noreferrer">issuer page</a></span>
             </div>
             <p id="market-error" class="inline-error" hidden></p>
-            <p class="disclosure">PreStocks describes these tokens as economic exposure. They do not convey ownership, voting, or dividend rights, and secondary liquidity is not guaranteed. See the <a href="https://prestocks.com/kalshi" target="_blank" rel="noreferrer">issuer disclosure</a>.</p>
+            <p class="disclosure">PreStocks describes these tokens as economic exposure. They do not convey ownership, voting, or dividend rights, and secondary liquidity is not guaranteed. A mark or route quote is not an executable price. See the selected <a id="market-disclosure-link" href="https://prestocks.com/kalshi" target="_blank" rel="noreferrer">issuer disclosure</a>.</p>
           </article>
 
           <article class="panel route-card quote-panel">
@@ -78,12 +85,12 @@
               </div>
               <span class="read-only-tag">No signing</span>
             </div>
-            <p class="panel-copy">A fresh Jupiter quote for the exact mint and input size you choose. The request has no wallet taker and cannot submit a swap.</p>
+            <p class="panel-copy">A fresh Jupiter quote for the selected exact mint and input size. The request has no wallet taker and cannot submit a swap.</p>
             <form id="quote-form" class="quote-form">
               <label for="quote-direction">Direction</label>
               <select id="quote-direction" name="side">
-                <option value="buy">Buy KALSHI with USDC</option>
-                <option value="sell">Sell KALSHI for USDC</option>
+                <option value="buy">Buy selected token with USDC</option>
+                <option value="sell">Sell selected token for USDC</option>
               </select>
               <label id="quote-amount-label" for="quote-amount">USDC input size</label>
               <div class="amount-input-wrap"><input id="quote-amount" name="amount" type="number" min="0.01" step="0.01" value="100" required /><span id="quote-unit">USDC</span></div>
@@ -92,7 +99,7 @@
             <div id="quote-result" class="quote-result" aria-live="polite" aria-atomic="true">
               <p class="empty-state">Choose a direction and size to request a live read-only quote.</p>
             </div>
-            <p class="quote-caveat">Indicative only. A route quote does not establish fillability, eligibility, execution, or auction benefit.</p>
+            <p class="quote-caveat">Indicative only. A route quote does not establish fillability, eligibility, execution, or auction benefit. Changing this selection never changes the separate devnet auction mints.</p>
           </article>
         </div>
       </section>
