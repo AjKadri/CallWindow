@@ -5,6 +5,7 @@ import {
   canSignDevnet,
   DevnetPreflightError,
   getInjectedWallets,
+  isAuctionWindowFailure,
   normalizeProviderNetwork,
   readProviderNetwork,
   requireDevnetNetwork,
@@ -55,8 +56,16 @@ test("devnet preflight distinguishes insufficient rent from other failures", () 
   assert.match(insufficient, /not have enough devnet SOL/);
   const other = classifyDevnetSimulation({ err: { InstructionError: [0, "Custom"] }, logs: ["custom program failure"] });
   assert.match(other, /Devnet preflight failed before signing/);
+  assert.doesNotMatch(other, /custom program failure/);
   const accountFailure = classifyDevnetSimulation({ err: { InstructionError: [0, "AccountNotFound"] }, logs: ["a program account was not found"] });
   assert.doesNotMatch(accountFailure, /not have enough devnet SOL/);
+});
+
+test("AuctionNotOpen remains distinct from funding failures", () => {
+  const message = classifyDevnetSimulation({ err: { InstructionError: [0, { Custom: 6007 }] }, logs: ["Error Code: AuctionNotOpen"] });
+  assert.match(message, /auction is no longer open/);
+  assert.equal(isAuctionWindowFailure(Object.assign(new Error(message), { details: "custom program failure" })), true);
+  assert.doesNotMatch(message, /raw|logs|custom program/);
 });
 
 test("failed creator preflight leaves a visible retry state and never sends", async () => {

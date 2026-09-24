@@ -89,17 +89,32 @@
               <div class="amount-input-wrap"><input id="create-limit" name="limit" type="number" min="19.50" max="20.50" step="0.01" value="20.00" required /><span>USD</span></div>
               <label for="create-quantity">Opening quantity</label>
               <div class="amount-input-wrap"><input id="create-quantity" name="quantity" type="number" min="0.01" max="100" step="0.01" value="1.50" required /><span>shares</span></div>
-              <label for="create-cutoff">Cutoff from now</label>
-              <div class="amount-input-wrap"><input id="create-cutoff" name="cutoff" type="number" min="10" max="3600" step="10" value="120" required /><span>seconds</span></div>
+              <label for="create-cutoff">Orders close in</label>
+              <div class="amount-input-wrap"><input id="create-cutoff" name="cutoff" type="number" min="1" max="60" step="1" value="15" required /><span>minutes</span></div>
+              <p id="create-cutoff-preview" class="field-help">Expected local close: checking… The timer starts during creation, and the opening order must finalize before it expires.</p>
               <p id="create-estimate" class="escrow-estimate">Connect a wallet to estimate rent and fees. Token requirements update from the opening side, quantity, and limit.</p>
               <p id="create-funding-status" class="funding-status" aria-live="polite" hidden></p>
               <a id="create-faucet-link" class="text-link create-faucet-link" href="https://faucet.solana.com/" target="_blank" rel="noreferrer" hidden>Get test SOL from the Solana faucet ↗</a>
               <button id="create-window" class="button button-dark button-full" type="submit" disabled>Connect wallet to create window</button>
             </form>
+            <aside id="creator-review" class="transaction-review" aria-live="polite" hidden>
+              <p class="eyebrow">Before signing</p>
+              <h4 id="creator-review-title">Review this Devnet action</h4>
+              <dl class="transaction-review-grid">
+                <div><dt>Network</dt><dd id="creator-review-network"></dd></div>
+                <div><dt>Test assets</dt><dd id="creator-review-assets"></dd></div>
+                <div><dt>Amount</dt><dd id="creator-review-amount"></dd></div>
+                <div><dt>Cutoff</dt><dd id="creator-review-cutoff"></dd></div>
+              </dl>
+              <p id="creator-review-sol" class="action-note"></p>
+              <p id="creator-review-note" class="disclosure"></p>
+            </aside>
             <p id="create-status" class="funding-status" aria-live="polite">A finalized opening order is required before sharing.</p>
             <button id="finish-opening-order" class="button button-outline button-full" type="button" hidden>Finish opening order</button>
+            <button id="discard-creator-setup" class="button button-outline button-full" type="button" hidden>Discard local setup</button>
             <a id="create-share-link" class="funding-link" href="#" target="_blank" rel="noreferrer" hidden>Open shareable room ↗</a>
             <code id="create-share-url" class="create-share-url"></code>
+            <details id="creator-debug" class="creator-debug" hidden><summary>Technical details</summary><code id="creator-debug-text"></code></details>
           </article>
           <article class="panel create-rules-panel">
             <p class="eyebrow">What gets shared</p>

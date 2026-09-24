@@ -71,13 +71,25 @@ export function requireDevnetNetwork(network, { walletName = "Selected wallet" }
 
 export function classifyDevnetSimulation({ err, logs = [] } = {}) {
   const diagnostic = [typeof err === "string" ? err : JSON.stringify(err ?? ""), ...logs].join(" ");
+  if (/6007|AuctionNotOpen/i.test(diagnostic)) {
+    return "Devnet preflight found that the auction is no longer open for this order.";
+  }
+  if (/6008|WindowClosed/i.test(diagnostic)) {
+    return "Devnet preflight found that the order window reached its cutoff.";
+  }
   if (/insufficient funds|insufficient lamports|rent[- ]exempt|rent exemption|account.*rent/i.test(diagnostic)) {
     return "Devnet preflight failed because this wallet may not have enough devnet SOL for account rent and fees. Fund the wallet from the Solana devnet faucet, then try again.";
   }
   if (/blockhash not found|block height exceeded|transaction expired/i.test(diagnostic)) {
     return "Devnet preflight became stale before signing. Try the action again.";
   }
-  return "Devnet preflight failed before signing" + (diagnostic ? ": " + diagnostic : ".");
+  return "Devnet preflight failed before signing. Review the window state and try again.";
+}
+
+export function isAuctionWindowFailure(error) {
+  const message = error instanceof Error ? error.message : String(error ?? "");
+  const details = error?.details ?? "";
+  return /6007|6008|AuctionNotOpen|WindowClosed|no longer open|reached its cutoff/i.test(`${message} ${details}`);
 }
 
 export function classifyDevnetProviderError(error, { walletName = "Selected wallet" } = {}) {
@@ -92,10 +104,15 @@ export function classifyDevnetProviderError(error, { walletName = "Selected wall
 }
 
 export class DevnetPreflightError extends Error {
-  constructor(message) {
+  constructor(message, { details = "" } = {}) {
     super(message);
     this.name = "DevnetPreflightError";
+    this.details = details;
   }
+}
+
+function simulationDiagnostic({ err, logs = [] } = {}) {
+  return [typeof err === "string" ? err : JSON.stringify(err ?? ""), ...logs].join(" ").trim();
 }
 
 export async function signAfterDevnetPreflight(transaction, { simulate, send }) {
@@ -105,12 +122,16 @@ export async function signAfterDevnetPreflight(transaction, { simulate, send }) 
   } catch (error) {
     const logs = error?.logs ?? error?.data?.logs ?? [];
     if (logs.length || /insufficient funds|insufficient lamports|rent[- ]exempt|rent exemption/i.test(error?.message ?? "")) {
-      throw new DevnetPreflightError(classifyDevnetSimulation({ err: error?.message, logs }));
+      throw new DevnetPreflightError(classifyDevnetSimulation({ err: error?.message, logs }), {
+        details: simulationDiagnostic({ err: error?.message, logs }),
+      });
     }
     throw new DevnetPreflightError("Devnet preflight could not run. Check the devnet RPC connection and try again.");
   }
   if (simulation?.value?.err) {
-    throw new DevnetPreflightError(classifyDevnetSimulation(simulation.value));
+    throw new DevnetPreflightError(classifyDevnetSimulation(simulation.value), {
+      details: simulationDiagnostic(simulation.value),
+    });
   }
   return send(transaction);
 }

@@ -25,6 +25,21 @@ async function read(overrides = {}) {
   });
 }
 
+test("opening-order funding checks only current owner rent and opening fees", async () => {
+  const result = await read({ account: { lamports: 6_000 }, balance: 6_000n });
+  const opening = await readDevnetFunding({
+    connection: mockConnection({ account: { lamports: 6_000 }, balance: 6_000n }),
+    walletKey: "wallet",
+    auctionAccountSize: 2_168,
+    tokenAccountSize: 165,
+    ownerTokenAccounts: ["base-ata", "quote-ata"],
+    phase: "opening",
+  });
+  assert.equal(result.phase, "create-and-opening");
+  assert.equal(opening.requiredLamports, 6_000n);
+  assert.equal(opening.status, "sufficient");
+});
+
 test("unfunded wallet is blocked with the full Devnet SOL shortfall", async () => {
   const result = await read({ account: null, balance: 0n });
   assert.equal(result.status, "missing");

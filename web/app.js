@@ -6,6 +6,7 @@ import {
   classifyDevnetProviderError,
   DevnetPreflightError,
   getInjectedWallets,
+  isAuctionWindowFailure,
   readProviderNetwork,
   requireDevnetNetwork,
   signAfterDevnetPreflight,
@@ -14,6 +15,14 @@ import {
   CREATOR_ESTIMATED_FEES_LAMPORTS,
   readDevnetFunding,
 } from "../src/wallet/funding.mjs";
+import {
+  DEFAULT_WINDOW_MINUTES,
+  MAX_WINDOW_MINUTES,
+  MIN_WINDOW_MINUTES,
+  cutoffSecondsFromMinutes,
+  expectedLocalCloseLabel,
+  openingWindowStatus,
+} from "../src/auction/creator.mjs";
 import {
   canShareSetup,
   creatorWindowState,
@@ -83,6 +92,8 @@ const state = {
   walletNetwork: { status: "unknown", reported: null },
   creatorFunding: null,
   creatorError: null,
+  creatorNotice: null,
+  creatorDebug: "",
   creatorStage: null,
   busy: false,
 };
@@ -91,6 +102,7 @@ const CREATOR_STAGE_LABELS = {
   validation: "Form validation",
   network: "Wallet network check",
   funding: "Devnet funding check",
+  state: "Devnet auction state check",
   time: "Devnet time lookup",
   build: "Instruction build",
   preparation: "Devnet transaction preparation",
@@ -124,6 +136,20 @@ function formatRawTokenAmount(raw, decimals) {
   return fraction ? `${whole}.${fraction}` : whole.toString();
 }
 
+function formatLocalDateTime(valueMs) {
+  if (!Number.isFinite(valueMs)) return "unavailable";
+  return new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(new Date(valueMs));
+}
+
+function formatDevnetCutoff(cutoffTime) {
+  try {
+    const seconds = Number(BigInt(cutoffTime));
+    return `${formatLocalDateTime(seconds * 1_000)} local time (${new Date(seconds * 1_000).toISOString().replace("T", " ").replace("Z", " UTC")})`;
+  } catch {
+    return "unavailable";
+  }
+}
+
 function compactKey(value) {
   return value ? `${value.slice(0, 5)}…${value.slice(-5)}` : "unavailable";
 }
@@ -146,6 +172,31 @@ function clearError(element) {
   element.hidden = true;
 }
 
+function renderCreatorReview(review = null) {
+  const container = $("creator-review");
+  if (!container) return;
+  if (!review) {
+    container.hidden = true;
+    return;
+  }
+  container.hidden = false;
+  $("creator-review-title").textContent = review.action;
+  $("creator-review-network").textContent = "Solana Devnet";
+  $("creator-review-assets").textContent = review.assets;
+  $("creator-review-amount").textContent = review.amount;
+  $("creator-review-sol").textContent = review.sol;
+  $("creator-review-cutoff").textContent = review.cutoff;
+  $("creator-review-note").textContent = "SOL shown in the wallet pays for Solana account rent and network fees. It does not buy DEMO-EQUITY or DEMO-USD.";
+}
+
+function renderCreatorDebug() {
+  const details = $("creator-debug");
+  const text = $("creator-debug-text");
+  if (!details || !text) return;
+  text.textContent = state.creatorDebug;
+  details.hidden = !state.creatorDebug;
+}
+
 function sharedAuctionAddress() {
   if (!isRoomPage) return null;
   const value = new URLSearchParams(window.location.search).get("auction");
@@ -160,7 +211,12 @@ function sharedAuctionAddress() {
 function readAuctionSetup() {
   try {
     const setup = JSON.parse(sessionStorage.getItem(CREATE_SETUP_KEY) ?? "null");
-    return setup && typeof setup.auctionAddress === "string" ? setup : null;
+    if (!setup || typeof setup.auctionAddress !== "string") return null;
+    if (Number.isInteger(setup.durationMinutes)) return setup;
+    if (Number.isInteger(setup.durationSeconds) && setup.durationSeconds > 0) {
+      return { ...setup, durationMinutes: Math.max(MIN_WINDOW_MINUTES, Math.round(setup.durationSeconds / 60)) };
+    }
+    return setup;
   } catch {
     return null;
   }
@@ -733,6 +789,7 @@ function resetWalletForChoice(id) {
   state.walletBalances = null;
   state.creatorFunding = null;
   state.creatorError = null;
+  state.creatorNotice = null;
   state.creatorStage = null;
   $("wallet-status").textContent = "Wallet selected. Connect it to continue.";
   renderWalletNetworkState();
@@ -834,6 +891,13 @@ async function readSharedDistributorStatus(address) {
   }
 }
 
+async function readFinalizedDevnetTime() {
+  const slot = await connection.getSlot("finalized");
+  const chainTime = await connection.getBlockTime(slot);
+  if (!Number.isSafeInteger(chainTime)) throw new Error("Devnet time was unavailable. Try again.");
+  return BigInt(chainTime);
+}
+
 function setVerifiedDevnetState(auctionAddress) {
   state.devnet = {
     network: "devnet",
@@ -867,6 +931,23 @@ async function loadSharedAuction(address) {
   renderProof();
   renderAuction();
   refreshWalletBalances();
+}
+
+async function refreshOpeningWindow(setup) {
+  await loadSharedAuction(setup.auctionAddress);
+  const chainTime = await readFinalizedDevnetTime();
+  const check = openingWindowStatus({
+    state: state.auction?.state,
+    cutoffTime: state.auction?.cutoffTime,
+    chainTime,
+  });
+  if (!check.ok) {
+    const stateLabel = AUCTION_STATES[state.auction?.state] ?? "Unknown state";
+    const error = new Error(`${check.message} Actual Devnet state: ${stateLabel}. Cutoff: ${formatDevnetCutoff(state.auction?.cutoffTime)}. Discard the stale local setup below to start a new window. This only clears browser state and does not recover on-chain account rent.`);
+    error.setupUsable = false;
+    throw error;
+  }
+  return { auction: state.auction, chainTime };
 }
 
 async function loadOperatorAuction(result) {
@@ -1275,8 +1356,9 @@ async function buildPermissionlessInstruction(name) {
   });
 }
 
-async function submitAndFinalize(instructions, label, { button = null, reload = true, onProgress = null } = {}) {
+async function submitAndFinalize(instructions, label, { button = null, reload = true, onProgress = null, review = null } = {}) {
   await requireConnectedDevnetWallet();
+  if (review) renderCreatorReview(review);
   state.busy = true;
   renderAuction();
   const actionButton = button ?? $("submit-order");
@@ -1487,12 +1569,54 @@ function updateEscrowEstimate() {
   }
 }
 
+function updateCreateCutoffPreview() {
+  const input = $("create-cutoff");
+  const preview = $("create-cutoff-preview");
+  if (!input || !preview) return;
+  try {
+    preview.textContent = `Expected local close: ${expectedLocalCloseLabel(input.value)}. The timer starts during creation, and the opening order must finalize before it expires.`;
+  } catch (errorValue) {
+    preview.textContent = errorValue instanceof Error ? errorValue.message : "Enter an order-window duration in minutes.";
+  }
+}
+
 function formatSolLamports(lamports) {
   try {
     return (Number(BigInt(lamports)) / LAMPORTS_PER_SOL).toFixed(6);
   } catch {
     return "unavailable";
   }
+}
+
+function reviewSolEstimate(funding, phase) {
+  const costs = funding?.costs;
+  if (!costs) return "Current rent and fee estimate is unavailable until Devnet responds.";
+  if (phase === "opening") {
+    return `Estimated owner token-account rent: ${formatSolLamports(costs.openingRentLamports)} SOL. Base network fee estimate: ${formatSolLamports(costs.openingFeeEstimateLamports)} SOL.`;
+  }
+  return `Estimated auction and vault account rent: ${formatSolLamports(costs.createRentLamports)} SOL. Base network fee estimate: ${formatSolLamports(costs.createFeeEstimateLamports)} SOL.`;
+}
+
+function openingOrderReview(setup, funding) {
+  const quantity = formatShares(BigInt(setup.quantityBaseUnits));
+  const price = formatDollars(setup.limitCents / 100);
+  const isBuy = setup.side === 0;
+  return {
+    action: "Fund opening order",
+    assets: isBuy ? "DEMO-USD for DEMO-EQUITY test shares" : "DEMO-EQUITY test shares for DEMO-USD",
+    amount: isBuy
+      ? `${quantity} DEMO-EQUITY at a ${price} per-share limit. Escrow: ${formatQuoteUnits(BigInt(setup.quantityBaseUnits) * BigInt(setup.limitCents) * 100n)} DEMO-USD.`
+      : `${quantity} DEMO-EQUITY escrowed at a ${price} per-share minimum.`,
+    sol: reviewSolEstimate(funding, "opening"),
+    cutoff: `Orders close: ${formatDevnetCutoff(setup.cutoffTime)}`,
+  };
+}
+
+function creatorFundingFailure(funding, action = "this action") {
+  if (funding?.status === "missing" || funding?.status === "insufficient") {
+    return new Error(`The connected wallet cannot ${action}. Devnet SOL balance: ${formatSolLamports(funding.balanceLamports)} SOL. Required now: ${formatSolLamports(funding.requiredLamports)} SOL. Shortfall: ${formatSolLamports(funding.shortfallLamports)} SOL. Use the test-SOL faucet, then retry.`);
+  }
+  return new Error(funding?.error ?? `Devnet funding could not be checked. No ${action} transaction was built or simulated.`);
 }
 
 function creatorOwnerTokenAccounts(walletKey = state.walletKey) {
@@ -1538,12 +1662,17 @@ function renderCreatorFunding() {
   } else if (funding.status === "insufficient") {
     status.textContent = `Devnet SOL is insufficient. Balance: ${balance} SOL. Required: ${required} SOL. Shortfall: ${shortfall} SOL. Fund this wallet before creating a window.`;
   } else {
-    status.textContent = `Devnet balance: ${balance} SOL. Estimated required for account rent and create plus opening fees: ${required} SOL. Shortfall: ${shortfall} SOL.`;
+    const phaseLabel = funding.phase === "opening"
+      ? "opening-order account rent and fees"
+      : funding.phase === "create"
+        ? "auction and vault account rent and create fees"
+        : "account rent and create plus opening fees";
+    status.textContent = `Devnet balance: ${balance} SOL. Estimated required for ${phaseLabel}: ${required} SOL. Shortfall: ${shortfall} SOL.`;
   }
   if (faucet) faucet.hidden = funding.status === "sufficient";
 }
 
-async function refreshCreatorFunding() {
+async function refreshCreatorFunding(phase = "create-and-opening") {
   if (!walletCanTransact()) {
     state.creatorFunding = null;
     renderCreatorFunding();
@@ -1560,6 +1689,7 @@ async function refreshCreatorFunding() {
       tokenAccountSize: TOKEN_ACCOUNT_SIZE,
       ownerTokenAccounts: creatorOwnerTokenAccounts(),
       estimatedFeesLamports: CREATOR_ESTIMATED_FEES_LAMPORTS,
+      phase,
     });
     if (state.walletKey?.toBase58() !== walletKey) return null;
     state.creatorFunding = funding;
@@ -1582,6 +1712,7 @@ function renderAuctionSetup() {
   const setup = state.setup;
   const createButton = $("create-window");
   const finishButton = $("finish-opening-order");
+  const discardButton = $("discard-creator-setup");
   const share = $("create-share-link");
   const shareUrl = $("create-share-url");
   const status = $("create-status");
@@ -1595,9 +1726,10 @@ function renderAuctionSetup() {
         : creatorState.buttonText;
     }
     if (finishButton) finishButton.hidden = true;
+    if (discardButton) discardButton.hidden = true;
     if (share) share.hidden = true;
     if (shareUrl) shareUrl.textContent = "";
-    if (status) status.textContent = state.creatorError ?? (walletCanTransact()
+    if (status) status.textContent = state.creatorError ?? state.creatorNotice ?? (walletCanTransact()
       ? state.walletNetwork.status === "devnet" ? creatorState.status : walletNetworkReason()
       : state.walletKey ? walletNetworkReason() : creatorState.status);
     return;
@@ -1610,28 +1742,34 @@ function renderAuctionSetup() {
   }
   if (finishButton) {
     finishButton.hidden = ready;
-    finishButton.disabled = !walletCanTransact() || state.walletKey.toBase58() !== setup.creator;
+    const setupWindowClosed = state.auction
+      && (state.auction.state !== 0 || BigInt(Math.floor(Date.now() / 1_000)) >= state.auction.cutoffTime);
+    finishButton.disabled = !walletCanTransact()
+      || state.walletKey.toBase58() !== setup.creator
+      || Boolean(setupWindowClosed);
   }
+  if (discardButton) discardButton.hidden = ready;
   if (share) {
     share.hidden = !ready;
     share.href = sharedRoomUrl(window.location.origin, setup.auctionAddress);
   }
   if (shareUrl) shareUrl.textContent = ready ? sharedRoomUrl(window.location.origin, setup.auctionAddress) : "";
   if (status) {
-    status.textContent = state.creatorError ?? (ready
+    status.textContent = state.creatorError ?? state.creatorNotice ?? (ready
       ? creatorState.status
       : "Auction account " + compactKey(setup.auctionAddress) + " is finalized. Finish the opening order before sharing.");
   }
   if ($("create-side")) $("create-side").value = setup.side === 0 ? "buy" : "sell";
   if ($("create-limit")) $("create-limit").value = (setup.limitCents / 100).toFixed(2);
   if ($("create-quantity")) $("create-quantity").value = (Number(setup.quantityBaseUnits) / 100).toFixed(2);
-  if ($("create-cutoff")) $("create-cutoff").value = String(setup.durationSeconds);
+  if ($("create-cutoff")) $("create-cutoff").value = String(setup.durationMinutes ?? Math.max(MIN_WINDOW_MINUTES, Math.round(Number(setup.durationSeconds) / 60)));
   for (const id of ["create-side", "create-limit", "create-quantity", "create-cutoff"]) {
     if ($(id)) $(id).disabled = true;
   }
 }
 
 async function updateCreateEstimate() {
+  updateCreateCutoffPreview();
   const estimate = $("create-estimate");
   if (!estimate) return;
   try {
@@ -1683,7 +1821,9 @@ function creatorFailure(errorValue) {
   const stage = CREATOR_STAGE_LABELS[state.creatorStage] ?? "Window creation";
   const message = `${stage} failed: ${detail}`;
   state.creatorError = message;
+  state.creatorDebug = errorValue?.details ?? "";
   creatorStatus(message, "error");
+  renderCreatorDebug();
   return message;
 }
 
@@ -1706,10 +1846,32 @@ function handleCreatorInvalid(event) {
 }
 
 function clearCreatorError() {
-  if (!state.creatorError) return;
+  if (!state.creatorError && !state.creatorNotice) return;
   state.creatorError = null;
+  state.creatorNotice = null;
+  state.creatorDebug = "";
   state.creatorStage = null;
+  renderCreatorDebug();
   renderAuctionSetup();
+}
+
+function discardCreatorSetup() {
+  const setup = state.setup ?? readAuctionSetup();
+  clearAuctionSetup();
+  state.creatorError = null;
+  state.creatorNotice = "Local setup discarded. The on-chain auction account remains on Devnet, so its rent is not recovered. You can start a new window.";
+  state.creatorDebug = "";
+  state.creatorStage = null;
+  renderCreatorReview(null);
+  renderCreatorDebug();
+  if (setup && new URLSearchParams(window.location.search).get("auction") === setup.auctionAddress) {
+    history.replaceState(null, "", "/room/");
+  }
+  state.sharedAuction = false;
+  state.liveRoom = null;
+  displayUnavailableAuction(state.creatorNotice);
+  renderAuctionSetup();
+  loadAuction();
 }
 
 async function createAuctionWindow(event) {
@@ -1718,7 +1880,11 @@ async function createAuctionWindow(event) {
   const button = $("create-window");
   if (form && !form.checkValidity()) return;
   state.creatorError = null;
+  state.creatorNotice = null;
+  state.creatorDebug = "";
   state.creatorStage = null;
+  renderCreatorReview(null);
+  renderCreatorDebug();
   button.disabled = true;
   try {
     setCreatorProgress("network", `Checking ${state.walletName ?? "the selected wallet"} and Solana Devnet…`);
@@ -1730,34 +1896,36 @@ async function createAuctionWindow(event) {
     const side = $("create-side").value === "buy" ? 0 : 1;
     const quantityBaseUnits = parseUnits($("create-quantity").value, 2);
     const limitCents = Number(parseUnits($("create-limit").value, 2));
-    const durationSeconds = Number($("create-cutoff").value);
+    const durationMinutes = Number($("create-cutoff").value);
     if (limitCents < AUCTION_FIRST_TICK_CENTS || limitCents > AUCTION_FIRST_TICK_CENTS + AUCTION_TICK_COUNT - 1) {
       throw new RangeError("Opening limit must stay inside the $19.50–$20.50 devnet grid.");
     }
     if (quantityBaseUnits > MAX_ORDER_BASE_UNITS) throw new RangeError("Opening quantity exceeds the 100-share program cap.");
-    if (!Number.isInteger(durationSeconds) || durationSeconds < 10 || durationSeconds > 3600) {
-      throw new RangeError("Choose a cutoff between 10 seconds and one hour.");
-    }
+    const durationSeconds = cutoffSecondsFromMinutes(durationMinutes);
     setCreatorProgress("funding", "Checking the connected wallet’s finalized Devnet account and SOL balance…");
-    const funding = await refreshCreatorFunding();
+    const funding = await refreshCreatorFunding("create");
     if (funding?.status !== "sufficient") {
-      if (funding?.status === "missing" || funding?.status === "insufficient") {
-        throw new Error(`The connected wallet does not have enough Devnet SOL. Balance: ${formatSolLamports(funding.balanceLamports)} SOL. Required: ${formatSolLamports(funding.requiredLamports)} SOL. Shortfall: ${formatSolLamports(funding.shortfallLamports)} SOL. Use the test-SOL faucet, then retry.`);
-      }
-      throw new Error(funding?.error ?? "Devnet funding could not be checked. No transaction was built or simulated.");
+      throw creatorFundingFailure(funding, "create the auction account");
     }
     setCreatorProgress("time", "Reading finalized Solana Devnet time…");
-    const slot = await connection.getSlot("finalized");
-    const chainTime = await connection.getBlockTime(slot);
-    if (!Number.isSafeInteger(chainTime)) throw new Error("Devnet time was unavailable. Try again.");
-    const cutoffTime = BigInt(chainTime + durationSeconds);
+    const chainTime = await readFinalizedDevnetTime();
+    const cutoffTime = chainTime + BigInt(durationSeconds);
     const auctionId = BigInt(Date.now());
     setCreatorProgress("build", "Building the auction-account instruction…");
     const built = await buildCreateAuctionInstruction({ auctionId, cutoffTime });
+    const review = {
+      action: "Create auction account",
+      assets: "DEMO-EQUITY and DEMO-USD test assets",
+      amount: "No test tokens move in this account-creation transaction.",
+      sol: reviewSolEstimate(state.creatorFunding, "create"),
+      cutoff: `Orders close: ${formatDevnetCutoff(cutoffTime)}`,
+    };
+    renderCreatorReview(review);
     const createSignature = await submitAndFinalize([built.instruction], "Create auction window", {
       button,
       reload: false,
       onProgress: setCreatorProgress,
+      review,
     });
     const setup = {
       auctionAddress: built.auctionKey.toBase58(),
@@ -1766,6 +1934,7 @@ async function createAuctionWindow(event) {
       side,
       quantityBaseUnits: quantityBaseUnits.toString(),
       limitCents,
+      durationMinutes,
       durationSeconds,
       cutoffTime: cutoffTime.toString(),
       createSignature,
@@ -1809,18 +1978,34 @@ async function finishOpeningOrder() {
   }
   button.disabled = true;
   try {
-    if (!state.auction || state.devnet?.auctionAddress !== setup.auctionAddress) {
-      await loadSharedAuction(setup.auctionAddress);
+    state.creatorError = null;
+    state.creatorNotice = null;
+    state.creatorDebug = "";
+    renderCreatorDebug();
+    setCreatorProgress("state", "Refreshing the finalized Devnet auction state…");
+    await refreshOpeningWindow(setup);
+    setCreatorProgress("funding", "Checking current Devnet rent, fees, and wallet balance…");
+    const funding = await refreshCreatorFunding("opening");
+    if (funding?.status !== "sufficient") {
+      throw creatorFundingFailure(funding, "fund the opening order");
     }
-    if (state.auction?.state !== 0) throw new Error("The created window is no longer open for an opening order.");
-    status.textContent = "Review the funded opening order in your wallet.";
+    setCreatorProgress("state", "Rechecking the auction state and cutoff before building…");
+    await refreshOpeningWindow(setup);
+    setCreatorProgress("build", "Building the funded opening-order instruction…");
+    const instructions = await buildOrderInstruction(setup.side, setup.limitCents, BigInt(setup.quantityBaseUnits));
+    const review = openingOrderReview(setup, state.creatorFunding);
+    renderCreatorReview(review);
+    setCreatorProgress("state", "Rechecking the auction state and cutoff before Devnet simulation…");
+    await refreshOpeningWindow(setup);
     const signature = await submitAndFinalize(
-      await buildOrderInstruction(setup.side, setup.limitCents, BigInt(setup.quantityBaseUnits)),
+      instructions,
       "Fund opening order",
-      { button, reload: false },
+      { button, reload: false, onProgress: setCreatorProgress, review },
     );
     persistAuctionSetup({ ...setup, openingSignature: signature });
     state.creatorError = null;
+    state.creatorNotice = null;
+    state.creatorDebug = "";
     state.creatorStage = "finalization";
     const url = new URL(sharedRoomUrl(window.location.origin, setup.auctionAddress));
     history.replaceState(null, "", url.pathname + url.search);
@@ -1829,11 +2014,27 @@ async function finishOpeningOrder() {
     status.textContent = "Opening order finalized. The shared window is ready.";
     renderAuctionSetup();
   } catch (errorValue) {
-    const message = errorValue instanceof Error ? errorValue.message : "Opening order was not finalized. You can retry it.";
+    let actionable = errorValue;
+    if (isAuctionWindowFailure(errorValue) && errorValue?.setupUsable !== false) {
+      try {
+        await refreshOpeningWindow(setup);
+        actionable = new Error("The auction changed while Devnet was simulating the opening order. Its refreshed state is still open. Review the order and try again.");
+        actionable.details = errorValue?.details ?? "";
+      } catch (refreshError) {
+        actionable = refreshError;
+      }
+    }
+    const message = creatorFailure(actionable);
+    const canRetry = actionable?.setupUsable !== false;
+    state.creatorError = canRetry ? `${message} You can retry the opening order.` : message;
+    state.creatorDebug = actionable?.details ?? "";
+    renderCreatorDebug();
     renderAuctionSetup();
-    status.textContent = message + " You can retry the opening order.";
+    status.textContent = state.creatorError;
   } finally {
-    button.disabled = false;
+    const windowClosed = state.auction
+      && (state.auction.state !== 0 || BigInt(Math.floor(Date.now() / 1_000)) >= state.auction.cutoffTime);
+    button.disabled = Boolean(windowClosed) || !walletCanTransact() || state.walletKey?.toBase58() !== setup.creator;
   }
 }
 
@@ -1931,6 +2132,7 @@ on("wallet-chooser", "keydown", (event) => {
 });
 on("get-test-assets", "click", claimTestAssets);
 on("create-window-form", "submit", createAuctionWindow);
+on("discard-creator-setup", "click", discardCreatorSetup);
 const creatorForm = $("create-window-form");
 if (creatorForm) {
   creatorForm.addEventListener("invalid", handleCreatorInvalid, true);
@@ -1959,6 +2161,7 @@ if (!isRoomPage) {
 renderWalletChoices();
 loadAuction();
 renderAuctionSetup();
+updateCreateCutoffPreview();
 updateEscrowEstimate();
 setInterval(() => {
   if (state.quote) renderQuote();
