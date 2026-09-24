@@ -1,6 +1,8 @@
 # CallWindow
 
-CallWindow pairs a live, read-only PreStocks KALSHI record and exact-mint route check with a separate bounded auction demo built for Solana devnet. The escrow-to-claim/refund path is verified on localnet using DEMO-EQUITY and DEMO-USD test mints with no equity backing. Public devnet deployment remains unverified pending funding.
+CallWindow pairs a live, read-only PreStocks KALSHI record and exact-mint route check with a separate bounded auction demo built for Solana devnet. The escrow-to-claim/refund path is verified on localnet using DEMO-EQUITY and DEMO-USD test mints with no equity backing. Public devnet funding transfers finalized, but deployment failed during the loader data write, so the public auction remains unverified.
+
+The public devnet funding transfer evidence is limited to two finalized SOL transfers: [buyer transfer](https://explorer.solana.com/tx/2JoncJ6VDLieCHWN3qT1sSLB5jUKt4WiemuKG4qK9Zv9ANix5TGQSUc9sVU3hNpdJk8mqMVrwUwLkJt8F2uSq1Yj?cluster=devnet) for 0.01005 SOL and [seller transfer](https://explorer.solana.com/tx/62zaZd8z46PL4QnKbgYPRPDDgdkTDQGHUgn6rd7gM3oUuCTo1FKne6uqP9jo8zJm2xCtc63UdQ4kXsUENZvTu2Vs?cluster=devnet) for 0.01004 SOL. The refreshed fresh-deployment preflight passed with a 1.55 SOL authority target, but the deployment failed with `Custom error: Max retries exceeded` while writing program data. The devnet program account is absent. No public devnet auction, claim, refund, close compute measurement, or final reconciliation is claimed.
 
 ## Run the app
 
