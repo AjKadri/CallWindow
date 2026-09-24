@@ -1384,8 +1384,9 @@ async function finishOpeningOrder() {
     status.textContent = "Opening order finalized. The shared window is ready.";
     renderAuctionSetup();
   } catch (errorValue) {
-    status.textContent = errorValue instanceof Error ? errorValue.message : "Opening order was not finalized. You can retry it.";
+    const message = errorValue instanceof Error ? errorValue.message : "Opening order was not finalized. You can retry it.";
     renderAuctionSetup();
+    status.textContent = message + " You can retry the opening order.";
   } finally {
     button.disabled = false;
   }
