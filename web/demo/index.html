@@ -166,12 +166,11 @@
                 <span class="read-only-tag read-only-devnet">Devnet only</span>
               </div>
               <p class="panel-copy">Connect a wallet on devnet. Your wallet reviews and signs each test transaction.</p>
-              <div class="wallet-picker">
-                <label for="wallet-selector">Wallet</label>
-                <select id="wallet-selector" aria-describedby="wallet-choice-status"><option value="">Detecting installed wallets…</option></select>
-                <p id="wallet-choice-status" class="wallet-choice-status">Detecting Phantom and Solflare…</p>
+              <div class="wallet-actions" aria-label="Choose a wallet">
+                <button id="connect-phantom" class="button button-outline" type="button">Connect Phantom</button>
+                <button id="connect-solflare" class="button button-outline" type="button">Connect Solflare</button>
               </div>
-              <button id="connect-wallet" class="button button-outline button-full" type="button" disabled>Connect selected wallet</button>
+              <p id="wallet-choice-status" class="wallet-choice-status" aria-live="polite">Detecting Phantom and Solflare…</p>
               <p id="wallet-status" class="wallet-status">No wallet connected.</p>
               <p id="wallet-network-help" class="wallet-network-help" hidden></p>
               <form id="order-form" class="order-form">

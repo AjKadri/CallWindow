@@ -77,7 +77,21 @@ const state = {
   walletId: null,
   walletName: null,
   walletNetwork: { status: "unknown", reported: null },
+  creatorError: null,
+  creatorStage: null,
   busy: false,
+};
+
+const CREATOR_STAGE_LABELS = {
+  validation: "Form validation",
+  network: "Wallet network check",
+  time: "Devnet time lookup",
+  build: "Instruction build",
+  preparation: "Devnet transaction preparation",
+  simulation: "Devnet simulation",
+  signing: "Wallet signing",
+  submission: "Devnet submission",
+  finalization: "Devnet finalization",
 };
 
 function isoTime(value) {
@@ -654,46 +668,43 @@ async function requireConnectedDevnetWallet() {
 }
 
 function renderWalletChoices() {
-  const selector = $("wallet-selector");
   const status = $("wallet-choice-status");
-  const button = $("connect-wallet");
-  if (!selector) return;
   const wallets = getInjectedWallets();
-  const selected = state.walletId;
-  selector.replaceChildren();
-  const placeholder = document.createElement("option");
-  placeholder.value = "";
-  placeholder.textContent = wallets.length ? "Choose a wallet" : "No Phantom or Solflare detected";
-  placeholder.disabled = true;
-  placeholder.selected = !selected;
-  selector.append(placeholder);
-  for (const wallet of wallets) {
-    const option = document.createElement("option");
-    option.value = wallet.id;
-    option.textContent = wallet.name + (canSignDevnet(wallet.provider) ? "" : " · Devnet signing unavailable");
-    option.disabled = !canSignDevnet(wallet.provider);
-    option.selected = selected === wallet.id;
-    selector.append(option);
+  const signableWallets = wallets.filter((wallet) => canSignDevnet(wallet.provider));
+  for (const id of ["phantom", "solflare"]) {
+    const button = $("connect-" + id);
+    if (!button) continue;
+    const wallet = wallets.find((candidate) => candidate.id === id);
+    const canSign = Boolean(wallet && canSignDevnet(wallet.provider));
+    button.disabled = !canSign;
+    button.textContent = state.walletId === id && state.walletKey
+      ? `Connected · ${wallet.name}`
+      : `Connect ${id === "phantom" ? "Phantom" : "Solflare"}`;
+    button.title = wallet
+      ? canSign ? "Connect this wallet for Devnet-only signing." : `${wallet.name} is detected but does not expose signTransaction.`
+      : `${id === "phantom" ? "Phantom" : "Solflare"} is not detected in this browser.`;
   }
-  selector.disabled = wallets.length === 0;
-  if (button) button.disabled = !selected || !wallets.some((wallet) => wallet.id === selected && canSignDevnet(wallet.provider));
   if (status) {
     status.textContent = state.walletKey && state.walletName
       ? `${state.walletName} connected. It signs only the Devnet test transaction.`
-      : wallets.length
-        ? "Choose Phantom or Solflare. The selected wallet signs only the Devnet test transaction."
-      : "Install Phantom or Solflare to connect a wallet.";
+      : !wallets.length
+        ? "No supported wallet detected. Install Phantom or Solflare, then reload this page."
+        : !signableWallets.length
+          ? "A supported wallet was detected, but it cannot sign Devnet transactions in this browser."
+          : "Choose Phantom or Solflare. Each action names the wallet it will connect.";
   }
 }
 
-function changeWalletChoice(event) {
-  const id = event.target.value;
+function resetWalletForChoice(id) {
   state.wallet = null;
   state.walletKey = null;
-  state.walletId = id || null;
+  state.walletId = id;
   state.walletName = null;
   state.walletNetwork = { status: "unknown", reported: null };
-  $("wallet-status").textContent = id ? "Wallet selected. Connect it to continue." : "No wallet selected.";
+  state.walletBalances = null;
+  state.creatorError = null;
+  state.creatorStage = null;
+  $("wallet-status").textContent = "Wallet selected. Connect it to continue.";
   renderWalletNetworkState();
   renderWalletChoices();
   renderAuction();
@@ -1234,12 +1245,16 @@ async function buildPermissionlessInstruction(name) {
   });
 }
 
-async function submitAndFinalize(instructions, label, { button = null, reload = true } = {}) {
+async function submitAndFinalize(instructions, label, { button = null, reload = true, onProgress = null } = {}) {
   await requireConnectedDevnetWallet();
   state.busy = true;
   renderAuction();
   const actionButton = button ?? $("submit-order");
   const originalLabel = actionButton?.textContent;
+  const progress = (stage, message, buttonText = message) => {
+    if (onProgress) onProgress(stage, message);
+    if (actionButton) actionButton.textContent = buttonText;
+  };
   if (actionButton) {
     actionButton.disabled = true;
     actionButton.textContent = "Review in wallet…";
@@ -1247,6 +1262,7 @@ async function submitAndFinalize(instructions, label, { button = null, reload = 
   let finalized = false;
   let signature;
   try {
+    progress("preparation", "Preparing the Devnet transaction…", "Preparing Devnet transaction…");
     const latest = await connection.getLatestBlockhash("finalized");
     const transaction = new Transaction().add(...instructions);
     transaction.feePayer = state.walletKey;
@@ -1254,14 +1270,17 @@ async function submitAndFinalize(instructions, label, { button = null, reload = 
     transaction.lastValidBlockHeight = latest.lastValidBlockHeight;
     let result;
     try {
+      progress("simulation", "Checking the transaction against Solana Devnet…", "Checking Devnet simulation…");
       result = await signAfterDevnetPreflight(transaction, {
         simulate: (builtTransaction) => connection.simulateTransaction(builtTransaction),
         send: async (builtTransaction) => {
           try {
+            progress("signing", `Review and sign in ${state.walletName ?? "your wallet"}. This transaction is Devnet-only.`, `Review in ${state.walletName ?? "wallet"}…`);
             const signedTransaction = await state.wallet.signTransaction(builtTransaction);
             if (!signedTransaction || typeof signedTransaction.serialize !== "function") {
               throw new Error(`${state.walletName ?? "Selected wallet"} did not return a signed Devnet transaction.`);
             }
+            progress("submission", "Submitting the signed transaction to Solana Devnet…", "Submitting to Devnet…");
             const sentSignature = await connection.sendRawTransaction(signedTransaction.serialize(), {
               preflightCommitment: "confirmed",
               maxRetries: 5,
@@ -1278,7 +1297,7 @@ async function submitAndFinalize(instructions, label, { button = null, reload = 
     }
     signature = typeof result === "string" ? result : result.signature;
     if (!signature) throw new Error("Wallet did not return a transaction signature.");
-    if (actionButton) actionButton.textContent = "Waiting for finalized devnet state…";
+    progress("finalization", "Waiting for finalized Devnet confirmation…", "Waiting for finalized Devnet state…");
     const confirmation = await connection.confirmTransaction({
       signature,
       blockhash: latest.blockhash,
@@ -1307,10 +1326,10 @@ function rememberTransaction(label, signature) {
   sessionStorage.setItem("callwindow-devnet-transactions", JSON.stringify(recent.slice(0, 8)));
 }
 
-async function connectWallet() {
-  const wallet = getInjectedWallets().find((candidate) => candidate.id === state.walletId);
+async function connectWallet(walletId) {
+  const wallet = getInjectedWallets().find((candidate) => candidate.id === walletId);
   if (!wallet) {
-    $("wallet-status").textContent = "Choose an installed Phantom or Solflare wallet first.";
+    $("wallet-status").textContent = `${walletId === "phantom" ? "Phantom" : "Solflare"} is not detected. Install it, then reload this page.`;
     renderWalletChoices();
     return;
   }
@@ -1318,6 +1337,9 @@ async function connectWallet() {
     $("wallet-status").textContent = `${wallet.name} does not expose signTransaction, so CallWindow cannot submit a Devnet-only transaction through it.`;
     return;
   }
+  state.creatorError = null;
+  state.creatorStage = null;
+  if (state.walletId !== wallet.id || !state.walletKey) resetWalletForChoice(wallet.id);
   try {
     const response = await wallet.provider.connect({ onlyIfTrusted: false });
     const key = response?.publicKey ?? wallet.provider.publicKey;
@@ -1330,7 +1352,6 @@ async function connectWallet() {
     $("wallet-status").textContent = state.walletNetwork.status === "devnet"
       ? `Connected ${compactKey(state.walletKey.toBase58())}. ${wallet.name} reports Solana Devnet.`
       : walletNetworkReason();
-    $("connect-wallet").textContent = `Connected · change ${wallet.name}`;
     renderWalletChoices();
     renderWalletNetworkState();
     renderAuction();
@@ -1445,7 +1466,7 @@ function renderAuctionSetup() {
   const shareUrl = $("create-share-url");
   const status = $("create-status");
   if (!setup) {
-    const creatorState = creatorWindowState({ walletKey: walletCanTransact(), setup: null });
+    const creatorState = creatorWindowState({ walletKey: walletCanTransact(), setup: null, error: state.creatorError });
     if (createButton) {
       createButton.disabled = creatorState.buttonDisabled;
       createButton.textContent = creatorState.buttonText;
@@ -1453,9 +1474,9 @@ function renderAuctionSetup() {
     if (finishButton) finishButton.hidden = true;
     if (share) share.hidden = true;
     if (shareUrl) shareUrl.textContent = "";
-    if (status) status.textContent = walletCanTransact()
+    if (status) status.textContent = state.creatorError ?? (walletCanTransact()
       ? state.walletNetwork.status === "devnet" ? creatorState.status : walletNetworkReason()
-      : state.walletKey ? walletNetworkReason() : creatorState.status;
+      : state.walletKey ? walletNetworkReason() : creatorState.status);
     return;
   }
   const ready = canShareSetup(setup);
@@ -1474,9 +1495,9 @@ function renderAuctionSetup() {
   }
   if (shareUrl) shareUrl.textContent = ready ? sharedRoomUrl(window.location.origin, setup.auctionAddress) : "";
   if (status) {
-    status.textContent = ready
+    status.textContent = state.creatorError ?? (ready
       ? creatorState.status
-      : "Auction account " + compactKey(setup.auctionAddress) + " is finalized. Finish the opening order before sharing.";
+      : "Auction account " + compactKey(setup.auctionAddress) + " is finalized. Finish the opening order before sharing.");
   }
   if ($("create-side")) $("create-side").value = setup.side === 0 ? "buy" : "sell";
   if ($("create-limit")) $("create-limit").value = (setup.limitCents / 100).toFixed(2);
@@ -1530,22 +1551,67 @@ async function updateCreateEstimate() {
   }
 }
 
+function creatorStatus(message, stateName = "progress") {
+  const status = $("create-status");
+  if (!status) return;
+  status.textContent = message;
+  status.dataset.state = stateName;
+}
+
+function setCreatorProgress(stage, message) {
+  state.creatorStage = stage;
+  creatorStatus(message, "progress");
+}
+
+function creatorFailure(errorValue) {
+  const detail = errorValue instanceof Error ? errorValue.message : String(errorValue ?? "The window was not created.");
+  const stage = CREATOR_STAGE_LABELS[state.creatorStage] ?? "Window creation";
+  const message = `${stage} failed: ${detail}`;
+  state.creatorError = message;
+  creatorStatus(message, "error");
+  return message;
+}
+
+function creatorValidationMessage(field) {
+  if (field.validity.valueMissing) return "enter a value.";
+  if (field.validity.rangeUnderflow) return `use ${field.min} or more.`;
+  if (field.validity.rangeOverflow) return `use ${field.max} or less.`;
+  if (field.validity.stepMismatch) return `use increments of ${field.step}.`;
+  if (field.validity.badInput) return "enter a number.";
+  return "check this value.";
+}
+
+function handleCreatorInvalid(event) {
+  const field = event.target;
+  if (!field?.id?.startsWith("create-") || field.validity.valid) return;
+  const label = document.querySelector(`label[for="${field.id}"]`)?.textContent ?? field.name ?? "This field";
+  state.creatorStage = "validation";
+  state.creatorError = `${label}: ${creatorValidationMessage(field)}`;
+  creatorStatus(state.creatorError, "error");
+}
+
+function clearCreatorError() {
+  if (!state.creatorError) return;
+  state.creatorError = null;
+  state.creatorStage = null;
+  renderAuctionSetup();
+}
+
 async function createAuctionWindow(event) {
   event.preventDefault();
+  const form = $("create-window-form");
   const button = $("create-window");
-  const status = $("create-status");
-  try {
-    await requireConnectedDevnetWallet();
-  } catch (errorValue) {
-    status.textContent = errorValue instanceof Error ? errorValue.message : "Connect a devnet wallet before creating a window.";
-    return;
-  }
-  if (state.setup && !canShareSetup(state.setup)) {
-    status.textContent = "Finish the existing opening order before creating another window in this tab.";
-    return;
-  }
+  if (form && !form.checkValidity()) return;
+  state.creatorError = null;
+  state.creatorStage = null;
   button.disabled = true;
   try {
+    setCreatorProgress("network", `Checking ${state.walletName ?? "the selected wallet"} and Solana Devnet…`);
+    await requireConnectedDevnetWallet();
+    if (state.setup && !canShareSetup(state.setup)) {
+      throw new Error("Finish the existing opening order before creating another window in this tab.");
+    }
+    setCreatorProgress("validation", "Validating the opening order…");
     const side = $("create-side").value === "buy" ? 0 : 1;
     const quantityBaseUnits = parseUnits($("create-quantity").value, 2);
     const limitCents = Number(parseUnits($("create-limit").value, 2));
@@ -1557,14 +1623,19 @@ async function createAuctionWindow(event) {
     if (!Number.isInteger(durationSeconds) || durationSeconds < 10 || durationSeconds > 3600) {
       throw new RangeError("Choose a cutoff between 10 seconds and one hour.");
     }
-    status.textContent = "Review the auction-account transaction in your wallet.";
+    setCreatorProgress("time", "Reading finalized Solana Devnet time…");
     const slot = await connection.getSlot("finalized");
     const chainTime = await connection.getBlockTime(slot);
     if (!Number.isSafeInteger(chainTime)) throw new Error("Devnet time was unavailable. Try again.");
     const cutoffTime = BigInt(chainTime + durationSeconds);
     const auctionId = BigInt(Date.now());
+    setCreatorProgress("build", "Building the auction-account instruction…");
     const built = await buildCreateAuctionInstruction({ auctionId, cutoffTime });
-    const createSignature = await submitAndFinalize([built.instruction], "Create auction window", { button, reload: false });
+    const createSignature = await submitAndFinalize([built.instruction], "Create auction window", {
+      button,
+      reload: false,
+      onProgress: setCreatorProgress,
+    });
     const setup = {
       auctionAddress: built.auctionKey.toBase58(),
       auctionId: auctionId.toString(),
@@ -1580,14 +1651,15 @@ async function createAuctionWindow(event) {
     state.sharedAuction = true;
     state.liveRoom = { source: "shared", auctionAddress: setup.auctionAddress, status: "shared" };
     setVerifiedDevnetState(setup.auctionAddress);
-    status.textContent = "Auction account finalized. Now fund the opening order before sharing.";
+    state.creatorError = null;
+    state.creatorStage = "finalization";
     await loadSharedAuction(setup.auctionAddress);
     renderAuctionSetup();
   } catch (errorValue) {
-    status.textContent = errorValue instanceof Error ? errorValue.message : "Auction creation was not completed.";
+    creatorFailure(errorValue);
     renderAuctionSetup();
   } finally {
-    if (!state.setup || canShareSetup(state.setup)) button.disabled = false;
+    if (!state.setup || canShareSetup(state.setup)) button.disabled = !walletCanTransact();
   }
 }
 
@@ -1622,6 +1694,8 @@ async function finishOpeningOrder() {
       { button, reload: false },
     );
     persistAuctionSetup({ ...setup, openingSignature: signature });
+    state.creatorError = null;
+    state.creatorStage = "finalization";
     const url = new URL(sharedRoomUrl(window.location.origin, setup.auctionAddress));
     history.replaceState(null, "", url.pathname + url.search);
     state.sharedAuction = true;
@@ -1719,10 +1793,16 @@ if (!isRoomPage) {
   on("quote-form", "submit", checkQuote);
   on("copy-mint", "click", copyMint);
 }
-on("wallet-selector", "change", changeWalletChoice);
-on("connect-wallet", "click", connectWallet);
+on("connect-phantom", "click", () => connectWallet("phantom"));
+on("connect-solflare", "click", () => connectWallet("solflare"));
 on("get-test-assets", "click", claimTestAssets);
 on("create-window-form", "submit", createAuctionWindow);
+const creatorForm = $("create-window-form");
+if (creatorForm) {
+  creatorForm.addEventListener("invalid", handleCreatorInvalid, true);
+  creatorForm.addEventListener("input", clearCreatorError);
+  creatorForm.addEventListener("change", clearCreatorError);
+}
 on("finish-opening-order", "click", finishOpeningOrder);
 on("create-side", "change", updateCreateEstimate);
 on("create-limit", "input", updateCreateEstimate);

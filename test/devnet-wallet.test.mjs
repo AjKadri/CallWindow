@@ -57,7 +57,7 @@ test("devnet preflight distinguishes insufficient rent from other failures", () 
   assert.match(other, /Devnet preflight failed before signing/);
 });
 
-test("failed devnet preflight never calls the wallet send method", async () => {
+test("failed creator preflight leaves a visible retry state and never sends", async () => {
   let sends = 0;
   await assert.rejects(
     signAfterDevnetPreflight({}, {
@@ -67,6 +67,13 @@ test("failed devnet preflight never calls the wallet send method", async () => {
     (error) => error instanceof DevnetPreflightError && /not have enough devnet SOL/.test(error.message),
   );
   assert.equal(sends, 0);
+  const failed = creatorWindowState({
+    walletKey: true,
+    error: "Devnet simulation failed: wallet may not have enough devnet SOL.",
+  });
+  assert.equal(failed.buttonText, "Retry create window");
+  assert.equal(failed.buttonDisabled, false);
+  assert.match(failed.status, /Devnet simulation failed/);
 });
 
 test("successful devnet preflight reaches the mocked wallet send method", async () => {

@@ -109,14 +109,17 @@ export function canShareSetup(setup) {
   return Boolean(setup?.createSignature && setup?.openingSignature);
 }
 
-export function creatorWindowState({ walletKey, setup } = {}) {
+export function creatorWindowState({ walletKey, setup, error } = {}) {
   if (!setup) {
+    const failure = typeof error === "string" && error.length > 0 ? error : null;
     return {
-      buttonText: walletKey ? "Create window account" : "Connect wallet to create window",
+      buttonText: walletKey
+        ? failure ? "Retry create window" : "Create window account"
+        : "Connect wallet to create window",
       buttonDisabled: !walletKey,
-      status: walletKey
+      status: failure ?? (walletKey
         ? "Connected on devnet. Review the opening order requirements before creating the window account."
-        : "Connect a devnet wallet to create a window account.",
+        : "Connect a devnet wallet to create a window account."),
     };
   }
   const ready = canShareSetup(setup);
