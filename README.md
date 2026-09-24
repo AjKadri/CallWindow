@@ -6,6 +6,16 @@ The public devnet funding transfer evidence includes the [buyer transfer](https:
 
 The complete three-wallet devnet flow finalized once after bounded request pacing and `Retry-After` handling. It reused finalized base mint `B6ZoEr92PB58bN1MgTXwjZHBUxCZ895ERVdhFJtSQFcP` and quote mint `7gLQ8vdtYTxbHa4YK9gjjsVe49WiKeH6pi2pV8us8zd4`, without creating duplicate mints or accounts. The ignored proof manifest at `target/devnet/manifest.json` contains 24 finalized transaction signatures and explorer links, the auction addresses, fees, claims, refunds, and final reconciliation. Close compute was 30,098 CU for the matched auction, 27,912 CU for no-cross, and 88,875 CU at 32 orders and 101 candidate ticks. Final balances were authority 1.94280484 SOL, buyer 0.010 SOL, and seller 0.010 SOL. All six demo vault balances were zero after claims and refunds.
 
+## Public devnet proof
+
+The verified close transactions are recorded in the ignored [`target/devnet/manifest.json`](target/devnet/manifest.json):
+
+- [Matched close](https://explorer.solana.com/tx/3tMh5qoya4y1JJZC8K85wZzHP12tok8T2CtjPbTHNe8L3cu6L68xD1vNohaq3AzoVZt7qdwzXekJVqbXsUPoBiFm?cluster=devnet): 30,098 compute units, 5,000 lamports.
+- [No-cross close](https://explorer.solana.com/tx/2kfe5TFFi6ibjSr1KXqjZWijChi4iKXver9eWDdch8U6LPNvPZJLJGAStj7ApaJ1ZJBMQjF7B4HbqLFqxpSVMGhZ?cluster=devnet): 27,912 compute units, 5,000 lamports.
+- [32-order, 101-tick close](https://explorer.solana.com/tx/3MfJ6HnuJdFFEELhRLXwKMEdkb3mJtCEMGaN94BMvcEFLsUJCbUpY3oPJGy1ND5acr8pCg8ye1NFNFiwZmoYLQEq?cluster=devnet): 88,875 compute units, 5,000 lamports.
+
+After claims and refunds, matched base/quote, no-cross base/quote, and maximum base/quote vaults were each `0` units.
+
 ## Run the app
 
 Use Node.js 24 or later. Run the server and Vite commands in separate terminals.
