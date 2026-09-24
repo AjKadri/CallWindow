@@ -1,8 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { mkdtemp, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import {
   DISTRIBUTION_LIMITS,
   distributionDecision,
+  getDistributorStatus,
   validateLiveAuctionRoom,
 } from "../src/server/auction-room.mjs";
 
@@ -49,4 +53,19 @@ test("asset distribution stops after cutoff and does not use a closed room", () 
   });
   assert.equal(expired.status, "unavailable");
   assert.equal(distributionDecision({ room: null, wallet: "wallet-a", ledger: { claims: [] } }).status, "unavailable");
+});
+
+test("distributor status exposes an exhausted cap instead of a usable CTA", async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "callwindow-distributor-"));
+  const keyPath = path.join(directory, "authority.json");
+  const ledgerPath = path.join(directory, "claims.json");
+  await writeFile(keyPath, "[]");
+  await writeFile(ledgerPath, JSON.stringify({
+    auctionAddress: room.auctionAddress,
+    claims: Array.from({ length: DISTRIBUTION_LIMITS.maxClaimsTotal }, (_, index) => ({ wallet: "wallet-" + index })),
+  }));
+  const status = await getDistributorStatus(room, keyPath, Date.now(), ledgerPath);
+  assert.equal(status.status, "unavailable");
+  assert.equal(status.remainingClaims, 0);
+  assert.match(status.reason, /cap/);
 });

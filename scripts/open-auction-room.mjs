@@ -19,7 +19,10 @@ import {
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const RPC = process.env.CALLWINDOW_DEVNET_RPC ?? "https://api.devnet.solana.com";
-const KEY_DIR = path.join(ROOT, "target", "devnet");
+const KEY_DIR = process.env.CALLWINDOW_DEVNET_KEY_DIR ?? path.join(ROOT, "target", "devnet");
+const AUTHORITY_KEY_PATH = process.env.CALLWINDOW_AUTHORITY_KEYFILE ?? path.join(KEY_DIR, "authority.json");
+const BUYER_KEY_PATH = process.env.CALLWINDOW_SEED_BUYER_KEYFILE ?? path.join(KEY_DIR, "buyer.json");
+const SELLER_KEY_PATH = process.env.CALLWINDOW_SEED_SELLER_KEYFILE ?? path.join(KEY_DIR, "seller.json");
 const ROOM_PATH = process.env.CALLWINDOW_ROOM_PATH ?? path.join(KEY_DIR, "auction-room.json");
 const PROGRAM_ID = new PublicKey("GxX6X6zZSQSuxEoTHPwaAmKCcpGRVRiB6ERANHzS7Eq9");
 const BASE_MINT = new PublicKey("B6ZoEr92PB58bN1MgTXwjZHBUxCZ895ERVdhFJtSQFcP");
@@ -41,7 +44,12 @@ function invariant(value, message) {
 }
 
 async function loadKeypair(name) {
-  const values = JSON.parse(await readFile(path.join(KEY_DIR, name + ".json"), "utf8"));
+  const paths = {
+    authority: AUTHORITY_KEY_PATH,
+    buyer: BUYER_KEY_PATH,
+    seller: SELLER_KEY_PATH,
+  };
+  const values = JSON.parse(await readFile(paths[name], "utf8"));
   return Keypair.fromSecretKey(Uint8Array.from(values));
 }
 

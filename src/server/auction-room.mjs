@@ -74,7 +74,12 @@ export async function readLiveAuctionRoom() {
   return { ...room, status: hasPassedCutoff ? "closed" : "open" };
 }
 
-export function getDistributorStatus(room, keyPath = DISTRIBUTOR_KEY_PATH, now = Date.now()) {
+export async function getDistributorStatus(
+  room,
+  keyPath = DISTRIBUTOR_KEY_PATH,
+  now = Date.now(),
+  ledgerPath = DISTRIBUTION_STATE_PATH,
+) {
   if (!room) {
     return {
       status: "unavailable",
@@ -99,10 +104,25 @@ export function getDistributorStatus(room, keyPath = DISTRIBUTOR_KEY_PATH, now =
       solFaucetUrl: "https://faucet.solana.com/",
     };
   }
+  const ledger = await readJson(ledgerPath);
+  const claims = ledger?.auctionAddress === room.auctionAddress && Array.isArray(ledger.claims)
+    ? ledger.claims
+    : [];
+  const remainingClaims = Math.max(0, DISTRIBUTION_LIMITS.maxClaimsTotal - claims.length);
+  if (remainingClaims === 0) {
+    return {
+      status: "unavailable",
+      reason: "The test-asset distribution cap for this window has been reached.",
+      maxClaimsPerWallet: DISTRIBUTION_LIMITS.maxClaimsPerWallet,
+      remainingClaims: 0,
+      solFunding: "faucet",
+      solFaucetUrl: "https://faucet.solana.com/",
+    };
+  }
   return {
     status: "available",
     maxClaimsPerWallet: DISTRIBUTION_LIMITS.maxClaimsPerWallet,
-    remainingClaims: DISTRIBUTION_LIMITS.maxClaimsTotal,
+    remainingClaims,
     baseUnitsPerClaim: DISTRIBUTION_LIMITS.baseUnitsPerClaim,
     quoteUnitsPerClaim: DISTRIBUTION_LIMITS.quoteUnitsPerClaim,
     solFunding: "faucet",

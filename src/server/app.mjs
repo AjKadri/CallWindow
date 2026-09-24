@@ -138,7 +138,7 @@ export function createCallWindowServer({ fetchImpl = fetch } = {}) {
           status: "available",
           network: "devnet",
           liveRoom,
-          distributor: getDistributorStatus(liveRoom),
+          distributor: await getDistributorStatus(liveRoom),
           historicalProof,
           currentReference: {
             network: historicalProof.network,
@@ -152,7 +152,7 @@ export function createCallWindowServer({ fetchImpl = fetch } = {}) {
           status: "unavailable",
           network: "devnet",
           liveRoom,
-          distributor: getDistributorStatus(liveRoom),
+          distributor: await getDistributorStatus(liveRoom),
           reason: "No tracked public devnet proof is available in this checkout yet.",
         });
       return;

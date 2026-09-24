@@ -30,6 +30,7 @@ const state = {
   proof: null,
   devnet: null,
   liveRoom: null,
+  distributor: null,
   auction: null,
   walletBalances: null,
   wallet: null,
@@ -492,6 +493,23 @@ function renderRoomCountdown() {
   }
 }
 
+function renderFundingAvailability() {
+  if (!isRoomPage) return;
+  const button = $("get-test-assets");
+  const status = $("funding-status");
+  if (!button || !status) return;
+  const distributor = state.distributor;
+  if (!distributor || distributor.status !== "available") {
+    button.disabled = true;
+    button.textContent = "Test assets unavailable";
+    status.textContent = distributor?.reason ?? "No public Auction Room is open.";
+    return;
+  }
+  button.disabled = false;
+  button.textContent = "Get test assets";
+  status.textContent = distributor.remainingClaims + " distribution claim" + (distributor.remainingClaims === 1 ? "" : "s") + " remain for this window. One claim per wallet.";
+}
+
 function displayUnavailableAuction(reason) {
   state.devnet = null;
   state.liveRoom = null;
@@ -522,12 +540,16 @@ async function loadAuction() {
     const result = await response.json();
     if (result.status !== "available") {
       state.proof = null;
+      state.distributor = result.distributor ?? null;
+      renderFundingAvailability();
       displayUnavailableAuction(result.reason ?? "No devnet auction is configured.");
       return;
     }
     const proof = result.historicalProof;
     const liveRoom = result.liveRoom;
     const current = liveRoom ?? result.currentReference;
+    state.distributor = result.distributor ?? null;
+    renderFundingAvailability();
     if (proof?.network !== "devnet" || current?.network !== "devnet"
       || !current.programId || !current.auctionAddress
       || current.mints?.base?.name !== "DEMO-EQUITY"
@@ -951,11 +973,11 @@ async function claimTestAssets() {
     if (result.signature) rememberTransaction("Get test assets", result.signature);
     renderProof();
     await refreshWalletBalances();
+    await loadAuction();
   } catch (errorValue) {
     status.textContent = errorValue instanceof Error ? errorValue.message : "Test assets could not be distributed.";
   } finally {
-    button.disabled = false;
-    button.textContent = "Get test assets";
+    renderFundingAvailability();
   }
 }
 
