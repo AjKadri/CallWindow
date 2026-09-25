@@ -48,3 +48,25 @@ export function openingWindowStatus({ state, cutoffTime, chainTime }) {
   }
   return { ok: true, reason: "open", stateLabel, message: "The Devnet auction is open for its opening order." };
 }
+
+export function creatorOpeningOrderState({
+  walletConnected = false,
+  walletAddress = null,
+  creatorAddress = null,
+  setupAuctionAddress = null,
+  loadedAuctionAddress = null,
+  auctionState,
+  cutoffTime,
+  savedCutoffTime = null,
+  nowSeconds = Math.floor(Date.now() / 1_000),
+} = {}) {
+  if (!walletConnected) return { disabled: true, reason: "wallet" };
+  if (walletAddress !== creatorAddress) return { disabled: true, reason: "creator-wallet" };
+  const setupAuctionLoaded = Boolean(setupAuctionAddress && loadedAuctionAddress === setupAuctionAddress);
+  const windowClosed = setupAuctionLoaded
+    ? auctionState !== 0 || (typeof cutoffTime === "bigint" && BigInt(nowSeconds) >= cutoffTime)
+    : typeof savedCutoffTime === "bigint" && BigInt(nowSeconds) >= savedCutoffTime;
+  return windowClosed
+    ? { disabled: true, reason: "closed" }
+    : { disabled: false, reason: "ready" };
+}

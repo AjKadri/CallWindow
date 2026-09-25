@@ -21,6 +21,7 @@ import {
   MAX_WINDOW_MINUTES,
   MIN_WINDOW_MINUTES,
   cutoffSecondsFromMinutes,
+  creatorOpeningOrderState,
   expectedLocalCloseLabel,
   openingWindowStatus,
 } from "../src/auction/creator.mjs";
@@ -1762,18 +1763,27 @@ function renderAuctionSetup() {
   const ready = canShareSetup(setup);
   const openingEditable = canEditOpeningOrder(setup);
   const creatorState = creatorWindowState({ walletKey: walletCanTransact(), setup });
+  let savedCutoffTime = null;
+  try {
+    savedCutoffTime = BigInt(setup.cutoffTime);
+  } catch {}
+  const openingState = creatorOpeningOrderState({
+    walletConnected: walletCanTransact(),
+    walletAddress: state.walletKey?.toBase58(),
+    creatorAddress: setup.creator,
+    setupAuctionAddress: setup.auctionAddress,
+    loadedAuctionAddress: state.devnet?.auctionAddress,
+    auctionState: state.auction?.state,
+    cutoffTime: state.auction?.cutoffTime,
+    savedCutoffTime,
+  });
   if (createButton) {
     createButton.disabled = creatorState.buttonDisabled;
     createButton.textContent = creatorState.buttonText;
   }
   if (finishButton) {
     finishButton.hidden = ready;
-    const setupWindowClosed = state.auction
-      && (state.auction.state !== 0
-        || (typeof state.auction.cutoffTime === "bigint" && BigInt(Math.floor(Date.now() / 1_000)) >= state.auction.cutoffTime));
-    finishButton.disabled = !walletCanTransact()
-      || state.walletKey.toBase58() !== setup.creator
-      || Boolean(setupWindowClosed);
+    finishButton.disabled = openingState.disabled;
   }
   if (discardButton) discardButton.hidden = ready;
   if (setupSummary) {
@@ -1788,9 +1798,16 @@ function renderAuctionSetup() {
   }
   if (shareUrl) shareUrl.textContent = ready ? sharedRoomUrl(window.location.origin, setup.auctionAddress) : "";
   if (status) {
+    const openingStatus = openingState.reason === "wallet"
+      ? "Connect the creator wallet to fund this opening order."
+      : openingState.reason === "creator-wallet"
+        ? "Reconnect the wallet that created this window before funding the opening order."
+        : openingState.reason === "closed"
+          ? "This creator window is closed or past its cutoff. Discard local setup to start a new window; on-chain account rent is not recovered."
+          : null;
     status.textContent = state.creatorError ?? state.creatorNotice ?? (ready
       ? creatorState.status
-      : "Auction account " + compactKey(setup.auctionAddress) + " is finalized. Review or edit the opening order, then fund it before sharing.");
+      : openingStatus ?? "Auction account " + compactKey(setup.auctionAddress) + " is finalized. Review or edit the opening order, then fund it before sharing.");
   }
   if (ready) renderCreatorReview(null);
   else renderCreatorReview(openingOrderReview(setup, state.creatorFunding));
