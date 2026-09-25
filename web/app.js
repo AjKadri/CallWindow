@@ -88,6 +88,7 @@ const state = {
   distributor: null,
   creatorDistributor: null,
   fundingNotice: "",
+  fundingError: "",
   auction: null,
   preview: null,
   sharedAuction: false,
@@ -726,6 +727,7 @@ function resetWalletForChoice(id) {
   state.creatorNotice = null;
   state.creatorStage = null;
   state.fundingNotice = "";
+  state.fundingError = "";
   renderFundingNotice();
   renderOrderStatus();
   renderOrderReview(null);
@@ -1653,6 +1655,7 @@ async function claimTestAssets() {
     status.textContent = errorValue instanceof Error ? errorValue.message : walletNetworkReason();
     return;
   }
+  state.fundingError = "";
   button.disabled = true;
   button.textContent = "Sending finalized distribution…";
   if ($("funding-link")) $("funding-link").hidden = true;
@@ -1694,9 +1697,14 @@ async function claimTestAssets() {
     await refreshWalletBalances();
     await loadAuction();
   } catch (errorValue) {
-    status.textContent = errorValue instanceof Error ? errorValue.message : "Test assets could not be distributed.";
+    state.fundingError = errorValue instanceof Error ? errorValue.message : "Test assets could not be distributed.";
+    status.textContent = state.fundingError;
   } finally {
     renderFundingAvailability();
+    if (state.fundingError && !button.disabled) {
+      button.textContent = "Try again";
+      status.textContent = state.fundingError;
+    }
   }
 }
 

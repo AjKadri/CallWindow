@@ -54,12 +54,31 @@ const AUCTION_HEADER_SIZE = 216;
 export function classifyDistributorFundingError(error) {
   const message = String(error?.message ?? error ?? "");
   if (/\b429\b|too many requests|rate limit/i.test(message)) {
-    return "Solana Devnet RPC is rate-limited while checking the distributor's test mints. Wait briefly, then reload the Demo.";
+    return "Solana Devnet RPC is rate-limited while checking distributor funding. No test-asset transaction was sent. Wait briefly, then try again.";
   }
   if (/timeout|timed out|fetch failed|ECONNRESET|ECONNREFUSED|ENOTFOUND/i.test(message)) {
-    return "The Solana Devnet RPC did not respond while checking the distributor's test mints. Wait briefly, then reload the Demo.";
+    return "The Solana Devnet RPC did not respond while checking distributor funding. No test-asset transaction was sent. Wait briefly, then try again.";
   }
   return "The configured test mints are currently unavailable on devnet.";
+}
+
+function isRateLimitedRpcError(error) {
+  const message = String(error?.message ?? error ?? "");
+  return error?.status === 429
+    || error?.statusCode === 429
+    || error?.code === 429
+    || /\b429\b|too many requests|rate limit/i.test(message);
+}
+
+export async function retryDevnetRead(operation, { maxRetries = 2, delayMs = 250 } = {}) {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return await operation();
+    } catch (error) {
+      if (!isRateLimitedRpcError(error) || attempt >= maxRetries) throw error;
+      await new Promise((resolve) => setTimeout(resolve, delayMs * (attempt + 1)));
+    }
+  }
 }
 
 export class AuctionRoomError extends Error {
@@ -542,7 +561,7 @@ export async function getMarketDistributorStatus(
 async function distributorFundingStatus(connection, authority, baseMintAddress = DEMO_BASE_MINT) {
   let balance;
   try {
-    balance = await connection.getBalance(authority.publicKey, "finalized");
+    balance = await retryDevnetRead(() => connection.getBalance(authority.publicKey, "finalized"));
   } catch (error) {
     return { available: false, reason: classifyDistributorFundingError(error) };
   }
@@ -552,10 +571,8 @@ async function distributorFundingStatus(connection, authority, baseMintAddress =
   const baseMint = new PublicKey(baseMintAddress);
   const quoteMint = new PublicKey(DEMO_QUOTE_MINT);
   try {
-    const [baseInfo, quoteInfo] = await Promise.all([
-      getMint(connection, baseMint, "finalized"),
-      getMint(connection, quoteMint, "finalized"),
-    ]);
+    const baseInfo = await retryDevnetRead(() => getMint(connection, baseMint, "finalized"));
+    const quoteInfo = await retryDevnetRead(() => getMint(connection, quoteMint, "finalized"));
     if (
       baseInfo.decimals !== 2
       || quoteInfo.decimals !== 6

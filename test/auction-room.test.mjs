@@ -13,6 +13,7 @@ import {
   getDistributorStatus,
   globalDistributionDecision,
   normalizeClaims,
+  retryDevnetRead,
   validateMarketAuctionRecord,
   validateSharedAuctionRecord,
   validateLiveAuctionRoom,
@@ -183,7 +184,19 @@ test("market asset distribution can prepare a wallet without an open auction", (
 
 test("distributor distinguishes Devnet RPC rate limits from missing mint configuration", () => {
   assert.match(classifyDistributorFundingError(new Error("429 Too Many Requests")), /rate-limited/);
+  assert.match(classifyDistributorFundingError(new Error("429 Too Many Requests")), /No test-asset transaction was sent/);
   assert.match(classifyDistributorFundingError(new Error("TokenInvalidAccountData")), /test mints are currently unavailable/);
+});
+
+test("distributor retries a bounded Devnet RPC rate limit before giving up", async () => {
+  let attempts = 0;
+  const result = await retryDevnetRead(async () => {
+    attempts += 1;
+    if (attempts < 3) throw Object.assign(new Error("Connection rate limits exceeded"), { status: 429 });
+    return "ok";
+  }, { delayMs: 0 });
+  assert.equal(result, "ok");
+  assert.equal(attempts, 3);
 });
 
 test("market distributor tells an already-claimed wallet why it cannot claim again", async () => {
