@@ -6,6 +6,7 @@ import path from "node:path";
 import {
   DISTRIBUTION_LIMITS,
   DISTRIBUTION_LEDGER_VERSION,
+  broadcastDistributionAttempt,
   classifyDistributorFundingError,
   distributionDecision,
   getMarketDistributorStatus,
@@ -13,10 +14,14 @@ import {
   getDistributorStatus,
   globalDistributionDecision,
   normalizeClaims,
+  normalizeAttempts,
+  reconcileDistributionAttempt,
   retryDevnetRead,
   validateMarketAuctionRecord,
   validateSharedAuctionRecord,
   validateLiveAuctionRoom,
+  verifyDevnetRpc,
+  withDistributionLock,
 } from "../src/server/auction-room.mjs";
 
 const room = {
@@ -44,7 +49,7 @@ test("live room accepts only the open devnet test-asset configuration", () => {
 test("asset distribution allows two claims per wallet and caps the global ledger", () => {
   assert.equal(DISTRIBUTION_LIMITS.maxClaimsPerWallet, 2);
   assert.equal(DISTRIBUTION_LIMITS.maxClaimsTotal, 50);
-  assert.equal(DISTRIBUTION_LEDGER_VERSION, 2);
+  assert.equal(DISTRIBUTION_LEDGER_VERSION, 3);
   const first = distributionDecision({ room, wallet: "wallet-a", ledger: { claims: [] } });
   assert.equal(first.allowed, true);
   const second = distributionDecision({ room, wallet: "wallet-a", ledger: { claims: [{ wallet: "wallet-a" }] } });
@@ -93,6 +98,111 @@ test("global distribution keeps the two-claim wallet limit across shared windows
   });
   assert.equal(full.status, "limited");
   assert.match(full.reason, /global/);
+});
+
+test("durable unresolved attempts occupy wallet and global claim slots", () => {
+  const attempt = {
+    wallet: "wallet-a",
+    signature: "signed-attempt",
+    status: "broadcasted",
+  };
+  assert.equal(normalizeAttempts({ version: DISTRIBUTION_LEDGER_VERSION, attempts: [attempt] }).length, 1);
+  const walletLimited = globalDistributionDecision({
+    wallet: "wallet-a",
+    ledger: { version: DISTRIBUTION_LEDGER_VERSION, claims: [{ wallet: "wallet-a" }], attempts: [attempt] },
+  });
+  assert.equal(walletLimited.status, "limited");
+  const globallyLimited = globalDistributionDecision({
+    wallet: "wallet-new",
+    ledger: {
+      version: DISTRIBUTION_LEDGER_VERSION,
+      claims: Array.from({ length: DISTRIBUTION_LIMITS.maxClaimsTotal - 1 }, (_, index) => ({ wallet: "wallet-" + index })),
+      attempts: [{ ...attempt, wallet: "wallet-last" }],
+    },
+  });
+  assert.equal(globallyLimited.status, "limited");
+});
+
+test("Devnet RPC verification rejects a non-Devnet genesis hash before mint send", async () => {
+  await assert.doesNotReject(() => verifyDevnetRpc({ getGenesisHash: async () => "EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG" }));
+  await assert.rejects(
+    () => verifyDevnetRpc({ getGenesisHash: async () => "mainnet-genesis" }),
+    /not Devnet/,
+  );
+});
+
+test("confirmation timeout leaves the signed attempt available for reconciliation", async () => {
+  let sends = 0;
+  await assert.rejects(
+    () => broadcastDistributionAttempt({
+      sendRawTransaction: async () => { sends += 1; return "signed-attempt"; },
+      confirmTransaction: async () => { throw new Error("confirmation timeout"); },
+    }, {
+      signature: "signed-attempt",
+      serializedTransaction: Buffer.from("signed-bytes").toString("base64"),
+      blockhash: "fresh-blockhash",
+      lastValidBlockHeight: 123,
+    }),
+    /confirmation timeout/,
+  );
+  assert.equal(sends, 1);
+});
+
+test("a 429 after broadcast does not create a second signed identity", async () => {
+  let sends = 0;
+  await assert.rejects(
+    () => broadcastDistributionAttempt({
+      sendRawTransaction: async () => { sends += 1; return "signed-attempt"; },
+      confirmTransaction: async () => { throw Object.assign(new Error("429 after broadcast"), { status: 429 }); },
+    }, {
+      signature: "signed-attempt",
+      serializedTransaction: Buffer.from("signed-bytes").toString("base64"),
+      blockhash: "fresh-blockhash",
+      lastValidBlockHeight: 123,
+    }),
+    /429 after broadcast/,
+  );
+  assert.equal(sends, 1);
+});
+
+test("reconciliation recognizes a finalized prior attempt without signing", async () => {
+  const result = await reconcileDistributionAttempt({
+    getSignatureStatuses: async () => ({ value: [{ confirmationStatus: "finalized", err: null }] }),
+  }, {
+    signature: "signed-attempt",
+    serializedTransaction: Buffer.from("signed-bytes").toString("base64"),
+    lastValidBlockHeight: 123,
+  });
+  assert.deepEqual(result, { status: "finalized" });
+});
+
+test("a crash before ledger completion can resend the same signed bytes while the blockhash is valid", async () => {
+  let resentBytes;
+  const result = await reconcileDistributionAttempt({
+    getSignatureStatuses: async () => ({ value: [null] }),
+    getBlockHeight: async () => 122,
+    sendRawTransaction: async (bytes) => { resentBytes = bytes; return "signed-attempt"; },
+  }, {
+    signature: "signed-attempt",
+    serializedTransaction: Buffer.from("signed-bytes").toString("base64"),
+    lastValidBlockHeight: 123,
+  });
+  assert.deepEqual(result, { status: "pending" });
+  assert.equal(Buffer.from(resentBytes).toString(), "signed-bytes");
+});
+
+test("the shared distributor lock rejects a concurrent process instead of overspending the last slot", async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "callwindow-distribution-lock-"));
+  const lockPath = path.join(directory, "claims.lock");
+  let release;
+  const held = withDistributionLock(() => new Promise((resolve) => { release = resolve; }), { lockPath, maxWaitMs: 500, pollMs: 5 });
+  while (!release) await new Promise((resolve) => setTimeout(resolve, 5));
+  await assert.rejects(
+    () => withDistributionLock(() => Promise.resolve(), { lockPath, maxWaitMs: 20, pollMs: 5 }),
+    /locked/,
+  );
+  release();
+  await held;
 });
 
 test("shared distribution accepts only an open exact-mint bounded devnet record", () => {

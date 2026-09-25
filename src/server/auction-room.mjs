@@ -1,4 +1,4 @@
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { mkdir, open, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -34,6 +34,8 @@ export const ROOM_PATH = process.env.CALLWINDOW_ROOM_PATH ?? path.join(ROOT, "ta
 export const MARKET_ROOMS_PATH = process.env.CALLWINDOW_MARKET_ROOMS_PATH ?? path.join(ROOT, "target", "devnet", "market-rooms.json");
 export const DISTRIBUTION_STATE_PATH = process.env.CALLWINDOW_DISTRIBUTION_STATE_PATH
   ?? path.join(ROOT, "target", "devnet", "auction-room-distributions.json");
+export const DISTRIBUTION_LOCK_PATH = process.env.CALLWINDOW_DISTRIBUTION_LOCK_PATH
+  ?? DISTRIBUTION_STATE_PATH + ".lock";
 export const DISTRIBUTOR_KEY_PATH = process.env.CALLWINDOW_DISTRIBUTOR_KEYFILE
   ?? path.join(ROOT, "target", "devnet", "authority.json");
 
@@ -43,7 +45,7 @@ export const DISTRIBUTION_LIMITS = Object.freeze({
   baseUnitsPerClaim: 1000,
   quoteUnitsPerClaim: 50_000_000,
 });
-export const DISTRIBUTION_LEDGER_VERSION = 2;
+export const DISTRIBUTION_LEDGER_VERSION = 3;
 export const DEVNET_PROGRAM_ID = ROOM_DEVNET_PROGRAM_ID;
 export const DEMO_BASE_MINT = ROOM_DEMO_BASE_MINT;
 export const DEMO_QUOTE_MINT = MARKET_DEMO_QUOTE_MINT;
@@ -96,6 +98,85 @@ async function readJson(filePath) {
     if (error?.code === "ENOENT") return null;
     throw error;
   }
+}
+
+const BASE58_ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+
+function encodeBase58(bytes) {
+  let value = 0n;
+  for (const byte of bytes) value = value * 256n + BigInt(byte);
+  let encoded = "";
+  while (value > 0n) {
+    encoded = BASE58_ALPHABET[Number(value % 58n)] + encoded;
+    value /= 58n;
+  }
+  for (const byte of bytes) {
+    if (byte !== 0) break;
+    encoded = BASE58_ALPHABET[0] + encoded;
+  }
+  return encoded || BASE58_ALPHABET[0];
+}
+
+async function sleep(milliseconds) {
+  await new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+export async function withDistributionLock(operation, {
+  lockPath = DISTRIBUTION_LOCK_PATH,
+  maxWaitMs = 750,
+  pollMs = 25,
+} = {}) {
+  await mkdir(path.dirname(lockPath), { recursive: true });
+  const startedAt = Date.now();
+  let handle;
+  while (!handle) {
+    try {
+      handle = await open(lockPath, "wx", 0o600);
+      await handle.writeFile(JSON.stringify({ pid: process.pid, createdAt: new Date().toISOString() }));
+    } catch (error) {
+      if (handle) await handle.close().catch(() => {});
+      handle = null;
+      if (error?.code !== "EEXIST") {
+        throw new AuctionRoomError("The test-asset distributor is busy or its shared ledger is locked. No transaction was signed.", 503);
+      }
+      let stale = false;
+      try {
+        const record = JSON.parse(await readFile(lockPath, "utf8"));
+        if (Number.isInteger(record.pid) && record.pid !== process.pid) {
+          try {
+            process.kill(record.pid, 0);
+          } catch (probeError) {
+            stale = probeError?.code === "ESRCH";
+          }
+        }
+      } catch {
+        stale = false;
+      }
+      if (stale) {
+        await unlink(lockPath).catch(() => {});
+        continue;
+      }
+      if (Date.now() - startedAt >= maxWaitMs) {
+        throw new AuctionRoomError("The test-asset distributor is busy or its shared ledger is locked. No transaction was signed.", 503);
+      }
+      await sleep(pollMs);
+    }
+  }
+  try {
+    return await operation();
+  } finally {
+    await handle.close().catch(() => {});
+    await unlink(lockPath).catch(() => {});
+  }
+}
+
+async function readDistributionLedger(filePath = DISTRIBUTION_STATE_PATH) {
+  const stored = await readJson(filePath);
+  return {
+    version: DISTRIBUTION_LEDGER_VERSION,
+    claims: normalizeClaims(stored),
+    attempts: normalizeAttempts(stored),
+  };
 }
 
 export function validateLiveAuctionRoom(room) {
@@ -161,8 +242,8 @@ export async function getDistributorStatus(
       solFaucetUrl: "https://faucet.solana.com/",
     };
   }
-  const claims = normalizeClaims(await readJson(ledgerPath));
-  const remainingClaims = Math.max(0, DISTRIBUTION_LIMITS.maxClaimsTotal - claims.length);
+  const ledger = await readDistributionLedger(ledgerPath);
+  const remainingClaims = Math.max(0, DISTRIBUTION_LIMITS.maxClaimsTotal - distributionUsage(ledger).used);
   if (remainingClaims === 0) {
     return {
       status: "unavailable",
@@ -185,7 +266,7 @@ export async function getDistributorStatus(
 }
 
 export function normalizeClaims(ledger) {
-  if (ledger?.version != null && ledger.version !== DISTRIBUTION_LEDGER_VERSION) return [];
+  if (ledger?.version != null && ledger.version !== 2 && ledger.version !== DISTRIBUTION_LEDGER_VERSION) return [];
   if (!Array.isArray(ledger?.claims)) return [];
   const legacyAuctionAddress = typeof ledger.auctionAddress === "string" ? ledger.auctionAddress : null;
   return ledger.claims.map((claim) => ({
@@ -194,10 +275,26 @@ export function normalizeClaims(ledger) {
   }));
 }
 
+export function normalizeAttempts(ledger) {
+  if (ledger?.version !== DISTRIBUTION_LEDGER_VERSION || !Array.isArray(ledger?.attempts)) return [];
+  return ledger.attempts.filter((attempt) => attempt && typeof attempt.wallet === "string" && attempt.signature)
+    .map((attempt) => ({ ...attempt }));
+}
+
+function activeDistributionAttempts(ledger) {
+  return normalizeAttempts(ledger).filter((attempt) => !["failed", "finalized"].includes(attempt.status));
+}
+
+function distributionUsage(ledger) {
+  const claims = normalizeClaims(ledger);
+  const attempts = activeDistributionAttempts(ledger);
+  return { claims, attempts, used: claims.length + attempts.length };
+}
+
 export function globalDistributionDecision({ wallet, ledger, limits = DISTRIBUTION_LIMITS }) {
   if (!wallet) return { allowed: false, status: "invalid", reason: "Connect a devnet wallet first." };
-  const claims = normalizeClaims(ledger);
-  const walletClaims = claims.filter((claim) => claim.wallet === wallet).length;
+  const { claims, attempts, used } = distributionUsage(ledger);
+  const walletClaims = [...claims, ...attempts].filter((claim) => claim.wallet === wallet).length;
   if (walletClaims >= limits.maxClaimsPerWallet) {
     return {
       allowed: false,
@@ -205,7 +302,7 @@ export function globalDistributionDecision({ wallet, ledger, limits = DISTRIBUTI
       reason: `This wallet has reached the ${limits.maxClaimsPerWallet}-claim test-asset limit.`,
     };
   }
-  if (claims.length >= limits.maxClaimsTotal) {
+  if (used >= limits.maxClaimsTotal) {
     return { allowed: false, status: "limited", reason: "The global test-asset distribution cap has been reached." };
   }
   return { allowed: true, status: "available" };
@@ -390,32 +487,110 @@ async function loadAuthority(keyPath = DISTRIBUTOR_KEY_PATH) {
   }
 }
 
-async function sendFinalized(connection, payer, instructions) {
+const DEVNET_GENESIS_HASH = "EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG";
+
+export async function verifyDevnetRpc(connection) {
+  const genesisHash = await connection.getGenesisHash();
+  if (genesisHash !== DEVNET_GENESIS_HASH) {
+    throw new AuctionRoomError("The configured Solana RPC is not Devnet. No test-asset transaction was sent.", 503);
+  }
+  return true;
+}
+
+async function buildSignedDistribution(connection, payer, instructions) {
+  await verifyDevnetRpc(connection);
   const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash("finalized");
   const transaction = new Transaction({
     feePayer: payer.publicKey,
     recentBlockhash: blockhash,
   }).add(...instructions);
   transaction.sign(payer);
-  let signature;
-  try {
-    signature = await connection.sendRawTransaction(transaction.serialize(), { preflightCommitment: "confirmed" });
-    const confirmation = await connection.confirmTransaction(
-      { signature, blockhash, lastValidBlockHeight },
-      "finalized",
-    );
-    if (confirmation.value.err) throw new Error(JSON.stringify(confirmation.value.err));
-  } catch (error) {
-    throw new AuctionRoomError("Test-asset distribution failed: " + error.message, 502);
-  }
-  return signature;
+  const serialized = transaction.serialize();
+  if (!transaction.signature) throw new AuctionRoomError("The distributor could not create a signed transaction identity.", 503);
+  return {
+    signature: encodeBase58(transaction.signature),
+    serializedTransaction: serialized.toString("base64"),
+    blockhash,
+    lastValidBlockHeight,
+  };
 }
 
-async function persistLedger(ledger) {
-  await mkdir(path.dirname(DISTRIBUTION_STATE_PATH), { recursive: true });
-  const temporaryPath = DISTRIBUTION_STATE_PATH + ".tmp";
+async function persistLedger(ledger, ledgerPath = DISTRIBUTION_STATE_PATH) {
+  await mkdir(path.dirname(ledgerPath), { recursive: true });
+  const temporaryPath = ledgerPath + ".tmp";
   await writeFile(temporaryPath, JSON.stringify(ledger, null, 2) + "\n", { mode: 0o600 });
-  await rename(temporaryPath, DISTRIBUTION_STATE_PATH);
+  await rename(temporaryPath, ledgerPath);
+}
+
+export async function reconcileDistributionAttempt(connection, attempt) {
+  const statuses = await connection.getSignatureStatuses([attempt.signature], { searchTransactionHistory: true });
+  const status = statuses?.value?.[0];
+  if (status?.err) return { status: "failed", reason: JSON.stringify(status.err) };
+  if (status?.confirmationStatus === "finalized") return { status: "finalized" };
+  if (status) return { status: "pending" };
+  if (attempt.lastValidBlockHeight == null) return { status: "unresolved" };
+  const blockHeight = await connection.getBlockHeight("finalized");
+  if (blockHeight > attempt.lastValidBlockHeight) return { status: "expired" };
+  const resendSignature = await connection.sendRawTransaction(Buffer.from(attempt.serializedTransaction, "base64"), {
+    preflightCommitment: "confirmed",
+  });
+  if (resendSignature !== attempt.signature) throw new Error("The Devnet RPC returned a different transaction identity while reconciling.");
+  return { status: "pending" };
+}
+
+export async function broadcastDistributionAttempt(connection, attempt) {
+  const broadcastSignature = await connection.sendRawTransaction(Buffer.from(attempt.serializedTransaction, "base64"), {
+    preflightCommitment: "confirmed",
+  });
+  if (broadcastSignature !== attempt.signature) {
+    throw new Error("The Devnet RPC returned a different transaction identity.");
+  }
+  const confirmation = await connection.confirmTransaction(
+    { signature: attempt.signature, blockhash: attempt.blockhash, lastValidBlockHeight: attempt.lastValidBlockHeight },
+    "finalized",
+  );
+  if (confirmation.value.err) throw new Error(JSON.stringify(confirmation.value.err));
+  return broadcastSignature;
+}
+
+async function reconcileLedgerAttempts(connection, ledger, ledgerPath = DISTRIBUTION_STATE_PATH) {
+  const active = activeDistributionAttempts(ledger);
+  if (!active.length) return { ledger, unresolved: [], completedClaims: [] };
+  const nextAttempts = [...normalizeAttempts(ledger)];
+  const newClaims = [...normalizeClaims(ledger)];
+  const completedClaims = [];
+  const unresolved = [];
+  for (const attempt of active) {
+    let result;
+    try {
+      result = await reconcileDistributionAttempt(connection, attempt);
+    } catch (error) {
+      throw new AuctionRoomError("The distributor could not reconcile a prior test-asset transaction. No new transaction was signed.", 503);
+    }
+    const index = nextAttempts.findIndex((candidate) => candidate.attemptId === attempt.attemptId);
+    if (result.status === "finalized") {
+      nextAttempts.splice(index, 1);
+      const claim = {
+        wallet: attempt.wallet,
+        auctionAddress: attempt.auctionAddress ?? null,
+        marketSymbol: attempt.marketSymbol ?? null,
+        claimedAt: new Date().toISOString(),
+        signature: attempt.signature,
+        baseUnits: attempt.baseUnits,
+        quoteUnits: attempt.quoteUnits,
+      };
+      newClaims.push(claim);
+      completedClaims.push(claim);
+    } else if (result.status === "failed") {
+      nextAttempts[index] = { ...attempt, status: "failed", error: result.reason };
+    } else {
+      nextAttempts[index] = { ...attempt, status: result.status === "expired" ? "unresolved" : "broadcasted" };
+      unresolved.push(nextAttempts[index]);
+    }
+  }
+  const nextLedger = { version: DISTRIBUTION_LEDGER_VERSION, claims: newClaims, attempts: nextAttempts };
+  if (JSON.stringify(nextLedger) !== JSON.stringify(ledger)) await persistLedger(nextLedger, ledgerPath);
+  return { ledger: nextLedger, unresolved, completedClaims };
 }
 
 let distributionQueue = Promise.resolve();
@@ -454,8 +629,8 @@ export async function getSharedDistributorStatus(
       solFaucetUrl: DEVNET_FAUCET_URL,
     };
   }
-  const claims = normalizeClaims(await readJson(ledgerPath));
-  const remainingClaims = Math.max(0, DISTRIBUTION_LIMITS.maxClaimsTotal - claims.length);
+  const ledger = await readDistributionLedger(ledgerPath);
+  const remainingClaims = Math.max(0, DISTRIBUTION_LIMITS.maxClaimsTotal - distributionUsage(ledger).used);
   if (remainingClaims === 0) {
     return {
       status: "unavailable",
@@ -509,9 +684,22 @@ export async function getMarketDistributorStatus(
   } catch (error) {
     return { status: "unavailable", scope: "market", reason: error.message || "The selected official PreStocks record is unavailable.", solFunding: "faucet", solFaucetUrl: DEVNET_FAUCET_URL };
   }
-  const claims = normalizeClaims(await readJson(ledgerPath));
-  const remainingClaims = Math.max(0, DISTRIBUTION_LIMITS.maxClaimsTotal - claims.length);
-  const walletClaims = wallet ? claims.filter((claim) => claim.wallet === wallet).length : 0;
+  const ledger = await readDistributionLedger(ledgerPath);
+  const usage = distributionUsage(ledger);
+  const remainingClaims = Math.max(0, DISTRIBUTION_LIMITS.maxClaimsTotal - usage.used);
+  const walletClaims = wallet ? [...usage.claims, ...usage.attempts].filter((claim) => claim.wallet === wallet).length : 0;
+  const walletAttempt = wallet ? usage.attempts.find((attempt) => attempt.wallet === wallet) : null;
+  if (walletAttempt) {
+    return {
+      status: "unavailable",
+      scope: "market",
+      reason: "A prior test-asset transaction for this wallet is still being reconciled. No second transaction will be signed.",
+      maxClaimsPerWallet: DISTRIBUTION_LIMITS.maxClaimsPerWallet,
+      remainingClaims,
+      solFunding: "faucet",
+      solFaucetUrl: DEVNET_FAUCET_URL,
+    };
+  }
   if (wallet && walletClaims >= DISTRIBUTION_LIMITS.maxClaimsPerWallet) {
     return {
       status: "limited",
@@ -607,17 +795,47 @@ async function distributeTestAssets(walletAddress, auctionAddress = null, symbol
     if (verified.status !== "available") throw new AuctionRoomError(verified.reason, 503);
   }
   const room = shared ? null : await readLiveAuctionRoom();
-  const storedLedger = (await readJson(DISTRIBUTION_STATE_PATH)) ?? { version: DISTRIBUTION_LEDGER_VERSION, claims: [] };
-  const ledger = { version: DISTRIBUTION_LEDGER_VERSION, claims: normalizeClaims(storedLedger) };
+  const connection = target?.connection ?? new Connection(DEVNET_RPC, "finalized");
+  return withDistributionLock(() => distributeWithLedgerLock({
+    wallet,
+    room,
+    target,
+    marketConfig,
+    connection,
+  }));
+}
+
+function claimResponse(claim) {
+  return {
+    status: "available",
+    wallet: claim.wallet,
+    baseUnits: claim.baseUnits,
+    quoteUnits: claim.quoteUnits,
+    signature: claim.signature,
+    explorerUrl: "https://explorer.solana.com/tx/" + claim.signature + "?cluster=devnet",
+  };
+}
+
+async function distributeWithLedgerLock({ wallet, room, target, marketConfig, connection }) {
+  await verifyDevnetRpc(connection);
+  const walletAddress = wallet.toBase58();
+  const reconciled = await reconcileLedgerAttempts(connection, await readDistributionLedger());
+  const ledger = reconciled.ledger;
+  const reconciledClaim = reconciled.completedClaims.find((claim) => claim.wallet === walletAddress);
+  if (reconciledClaim) return claimResponse(reconciledClaim);
+  const unresolved = reconciled.unresolved.find((attempt) => attempt.wallet === walletAddress);
+  if (unresolved) {
+    throw new AuctionRoomError("A prior test-asset transaction for this wallet is still unresolved. CallWindow will reconcile it before signing another transaction.", 409);
+  }
+  const shared = Boolean(target);
   const decision = shared
-    ? globalDistributionDecision({ wallet: wallet.toBase58(), ledger })
-    : distributionDecision({ room, market: marketConfig, wallet: wallet.toBase58(), ledger });
+    ? globalDistributionDecision({ wallet: walletAddress, ledger })
+    : distributionDecision({ room, market: marketConfig, wallet: walletAddress, ledger });
   if (!decision.allowed) throw new AuctionRoomError(decision.reason, decision.status === "limited" ? 429 : 409);
   const authority = await loadAuthority();
   if (room?.distributorAuthority && room.distributorAuthority !== authority.publicKey.toBase58()) {
     throw new AuctionRoomError("The distributor authority does not match the active room.", 503);
   }
-  const connection = target?.connection ?? new Connection(DEVNET_RPC, "finalized");
   const baseMintAddress = target?.marketConfig?.testMint ?? marketConfig?.testMint ?? DEMO_BASE_MINT;
   const funding = await distributorFundingStatus(connection, authority, baseMintAddress);
   if (!funding.available) throw new AuctionRoomError(funding.reason, 503);
@@ -642,23 +860,43 @@ async function distributeTestAssets(walletAddress, auctionAddress = null, symbol
     createMintToInstruction(baseMint, baseAta, authority.publicKey, DISTRIBUTION_LIMITS.baseUnitsPerClaim),
     createMintToInstruction(quoteMint, quoteAta, authority.publicKey, DISTRIBUTION_LIMITS.quoteUnitsPerClaim),
   );
-  const signature = await sendFinalized(connection, authority, instructions);
-  const claim = {
-    wallet: wallet.toBase58(),
+  const signed = await buildSignedDistribution(connection, authority, instructions);
+  const attempt = {
+    attemptId: `${walletAddress}:${signed.signature}`,
+    wallet: walletAddress,
     auctionAddress: target?.auctionAddress ?? room?.auctionAddress ?? null,
     marketSymbol: target?.marketConfig?.symbol ?? marketConfig?.symbol ?? null,
-    claimedAt: new Date().toISOString(),
-    signature,
+    baseMint: baseMint.toBase58(),
+    quoteMint: quoteMint.toBase58(),
     baseUnits: DISTRIBUTION_LIMITS.baseUnitsPerClaim,
     quoteUnits: DISTRIBUTION_LIMITS.quoteUnitsPerClaim,
+    signature: signed.signature,
+    serializedTransaction: signed.serializedTransaction,
+    blockhash: signed.blockhash,
+    lastValidBlockHeight: signed.lastValidBlockHeight,
+    status: "prepared",
+    preparedAt: new Date().toISOString(),
   };
-  await persistLedger({ version: DISTRIBUTION_LEDGER_VERSION, claims: [...ledger.claims, claim] });
-  return {
-    status: "available",
-    wallet: wallet.toBase58(),
-    baseUnits: claim.baseUnits,
-    quoteUnits: claim.quoteUnits,
-    signature,
-    explorerUrl: "https://explorer.solana.com/tx/" + signature + "?cluster=devnet",
+  await persistLedger({ ...ledger, attempts: [...normalizeAttempts(ledger), attempt] });
+
+  try {
+    await broadcastDistributionAttempt(connection, attempt);
+    const broadcastedAttempt = { ...attempt, status: "broadcasted", broadcastedAt: new Date().toISOString() };
+    await persistLedger({ ...ledger, attempts: [...normalizeAttempts(ledger), broadcastedAttempt] });
+  } catch (error) {
+    throw new AuctionRoomError("Test-asset distribution is unresolved. The signed Devnet transaction was retained and will be reconciled before any retry: " + error.message, 502);
+  }
+
+  const claim = {
+    wallet: attempt.wallet,
+    auctionAddress: attempt.auctionAddress,
+    marketSymbol: attempt.marketSymbol,
+    claimedAt: new Date().toISOString(),
+    signature: attempt.signature,
+    baseUnits: attempt.baseUnits,
+    quoteUnits: attempt.quoteUnits,
   };
+  const remainingAttempts = normalizeAttempts(ledger).filter((candidate) => candidate.attemptId !== attempt.attemptId);
+  await persistLedger({ version: DISTRIBUTION_LEDGER_VERSION, claims: [...normalizeClaims(ledger), claim], attempts: remainingAttempts });
+  return claimResponse(claim);
 }

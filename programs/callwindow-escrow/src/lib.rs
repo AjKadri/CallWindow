@@ -226,14 +226,7 @@ pub mod callwindow_escrow {
             ctx.accounts.authority.key(),
             AuctionError::WrongAuthority
         );
-        require!(
-            auction.state == AUCTION_OPEN || auction.state == AUCTION_CLOSED,
-            AuctionError::AuctionAlreadyRefundable
-        );
-        require!(
-            auction.claimed_count == 0,
-            AuctionError::ClaimsAlreadyStarted
-        );
+        require!(halt_available(auction), AuctionError::AuctionAlreadyRefundable);
         halt(auction);
         Ok(())
     }
@@ -799,9 +792,12 @@ fn halt(auction: &mut Auction) {
     }
 }
 
+fn halt_available(auction: &Auction) -> bool {
+    auction.state == AUCTION_OPEN && auction.claimed_count == 0
+}
+
 fn abort_available(auction: &Auction, now: i64) -> bool {
     (auction.state == AUCTION_OPEN
-        || auction.state == AUCTION_CLOSED
         || auction.state == AUCTION_HALTED)
         && auction.claimed_count == 0
         && now >= auction.abort_after
@@ -1050,6 +1046,28 @@ mod tests {
         assert!(abort_available(&auction, auction.abort_after));
         auction.claimed_count = 1;
         assert!(!abort_available(&auction, auction.abort_after));
+    }
+
+    #[test]
+    fn halt_rejects_closed_zero_claim_auction_without_erasing_close() {
+        let mut auction = new_auction();
+        auction.state = AUCTION_CLOSED;
+        auction.clearing_price_cents = 2_000;
+        auction.matched_base = 100;
+        assert!(!halt_available(&auction));
+        assert_eq!(auction.clearing_price_cents, 2_000);
+        assert_eq!(auction.matched_base, 100);
+    }
+
+    #[test]
+    fn abort_rejects_closed_zero_claim_auction_without_erasing_close() {
+        let mut auction = new_auction();
+        auction.state = AUCTION_CLOSED;
+        auction.clearing_price_cents = 2_000;
+        auction.matched_base = 100;
+        assert!(!abort_available(&auction, auction.abort_after));
+        assert_eq!(auction.clearing_price_cents, 2_000);
+        assert_eq!(auction.matched_base, 100);
     }
 
     #[test]
