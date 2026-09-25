@@ -50,6 +50,17 @@ export const MIN_DISTRIBUTOR_LAMPORTS = 5_000_000;
 const DEVNET_FAUCET_URL = "https://faucet.solana.com/";
 const AUCTION_HEADER_SIZE = 216;
 
+export function classifyDistributorFundingError(error) {
+  const message = String(error?.message ?? error ?? "");
+  if (/\b429\b|too many requests|rate limit/i.test(message)) {
+    return "Solana Devnet RPC is rate-limited while checking the distributor's test mints. Wait briefly, then reload the Demo.";
+  }
+  if (/timeout|timed out|fetch failed|ECONNRESET|ECONNREFUSED|ENOTFOUND/i.test(message)) {
+    return "The Solana Devnet RPC did not respond while checking the distributor's test mints. Wait briefly, then reload the Demo.";
+  }
+  return "The configured test mints are currently unavailable on devnet.";
+}
+
 export class AuctionRoomError extends Error {
   constructor(message, statusCode = 400) {
     super(message);
@@ -174,10 +185,10 @@ export function globalDistributionDecision({ wallet, ledger, limits = DISTRIBUTI
   return { allowed: true, status: "available" };
 }
 
-export function distributionDecision({ room, wallet, ledger, limits = DISTRIBUTION_LIMITS, now = Date.now() }) {
-  if (!room) return { allowed: false, status: "unavailable", reason: "No public Auction Room is open." };
+export function distributionDecision({ room, market, wallet, ledger, limits = DISTRIBUTION_LIMITS, now = Date.now() }) {
+  if (!room && !market) return { allowed: false, status: "unavailable", reason: "No public Auction Room is open." };
   if (!wallet) return { allowed: false, status: "invalid", reason: "Connect a devnet wallet first." };
-  if (room.cutoffTime && Date.parse(room.cutoffTime) <= now) {
+  if (!market && room.cutoffTime && Date.parse(room.cutoffTime) <= now) {
     return { allowed: false, status: "unavailable", reason: "This window has passed its cutoff. Start the next window for fresh test assets." };
   }
   return globalDistributionDecision({ wallet, ledger, limits });
@@ -439,6 +450,78 @@ export async function getSharedDistributorStatus(
   if (!funding.available) return { status: "unavailable", reason: funding.reason, solFunding: "faucet", solFaucetUrl: DEVNET_FAUCET_URL };
   return {
     status: "available",
+    scope: "window",
+    maxClaimsPerWallet: DISTRIBUTION_LIMITS.maxClaimsPerWallet,
+    remainingClaims,
+    baseUnitsPerClaim: DISTRIBUTION_LIMITS.baseUnitsPerClaim,
+    quoteUnitsPerClaim: DISTRIBUTION_LIMITS.quoteUnitsPerClaim,
+    solFunding: "faucet",
+    solFaucetUrl: DEVNET_FAUCET_URL,
+  };
+}
+
+export async function getMarketDistributorStatus(
+  symbol,
+  {
+    wallet = null,
+    keyPath = DISTRIBUTOR_KEY_PATH,
+    ledgerPath = DISTRIBUTION_STATE_PATH,
+    connectionFactory = (rpc) => new Connection(rpc, "finalized"),
+    marketFetchImpl = fetch,
+  } = {},
+) {
+  const marketConfig = getDemoMarketConfig(symbol);
+  if (!marketConfig) {
+    return { status: "unavailable", reason: "The selected PreStocks product is not supported for Devnet test assets." };
+  }
+  if (!existsSync(keyPath)) {
+    return { status: "unavailable", reason: "The test-asset distributor is not configured on this server.", solFunding: "faucet", solFaucetUrl: DEVNET_FAUCET_URL };
+  }
+  try {
+    const verified = await getVerifiedDemoRecord({ symbol: marketConfig.symbol, mint: marketConfig.mainnetMint }, marketFetchImpl);
+    if (verified.status !== "available") return { status: "unavailable", reason: verified.reason, solFunding: "faucet", solFaucetUrl: DEVNET_FAUCET_URL };
+  } catch (error) {
+    return { status: "unavailable", scope: "market", reason: error.message || "The selected official PreStocks record is unavailable.", solFunding: "faucet", solFaucetUrl: DEVNET_FAUCET_URL };
+  }
+  const claims = normalizeClaims(await readJson(ledgerPath));
+  const remainingClaims = Math.max(0, DISTRIBUTION_LIMITS.maxClaimsTotal - claims.length);
+  if (wallet && claims.some((claim) => claim.wallet === wallet)) {
+    return {
+      status: "limited",
+      scope: "market",
+      reason: "This wallet has already claimed test assets. The global distributor allows one claim per wallet.",
+      maxClaimsPerWallet: DISTRIBUTION_LIMITS.maxClaimsPerWallet,
+      remainingClaims,
+      baseUnitsPerClaim: DISTRIBUTION_LIMITS.baseUnitsPerClaim,
+      quoteUnitsPerClaim: DISTRIBUTION_LIMITS.quoteUnitsPerClaim,
+      solFunding: "faucet",
+      solFaucetUrl: DEVNET_FAUCET_URL,
+    };
+  }
+  if (remainingClaims === 0) {
+    return {
+      status: "unavailable",
+      scope: "market",
+      reason: "The global test-asset distribution cap has been reached.",
+      maxClaimsPerWallet: DISTRIBUTION_LIMITS.maxClaimsPerWallet,
+      remainingClaims: 0,
+      solFunding: "faucet",
+      solFaucetUrl: DEVNET_FAUCET_URL,
+    };
+  }
+  let authority;
+  try {
+    authority = await loadAuthority(keyPath);
+  } catch (error) {
+    return { status: "unavailable", scope: "market", reason: error.message, solFunding: "faucet", solFaucetUrl: DEVNET_FAUCET_URL };
+  }
+  const connection = connectionFactory(DEVNET_RPC);
+  const funding = await distributorFundingStatus(connection, authority, marketConfig.testMint);
+  if (!funding.available) return { status: "unavailable", scope: "market", reason: funding.reason, solFunding: "faucet", solFaucetUrl: DEVNET_FAUCET_URL };
+  return {
+    status: "available",
+    scope: "market",
+    symbol: marketConfig.symbol,
     maxClaimsPerWallet: DISTRIBUTION_LIMITS.maxClaimsPerWallet,
     remainingClaims,
     baseUnitsPerClaim: DISTRIBUTION_LIMITS.baseUnitsPerClaim,
@@ -452,8 +535,8 @@ async function distributorFundingStatus(connection, authority, baseMintAddress =
   let balance;
   try {
     balance = await connection.getBalance(authority.publicKey, "finalized");
-  } catch {
-    return { available: false, reason: "The test-asset distributor funding state is currently unavailable on devnet." };
+  } catch (error) {
+    return { available: false, reason: classifyDistributorFundingError(error) };
   }
   if (balance < MIN_DISTRIBUTOR_LAMPORTS) {
     return { available: false, reason: "The test-asset distributor is out of devnet SOL for account rent and fees." };
@@ -473,8 +556,8 @@ async function distributorFundingStatus(connection, authority, baseMintAddress =
     ) {
       return { available: false, reason: "The configured test mints do not match the distributor authority or decimals." };
     }
-  } catch {
-    return { available: false, reason: "The configured test mints are currently unavailable on devnet." };
+  } catch (error) {
+    return { available: false, reason: classifyDistributorFundingError(error) };
   }
   return { available: true };
 }
@@ -487,24 +570,30 @@ async function distributeTestAssets(walletAddress, auctionAddress = null, symbol
     throw new AuctionRoomError("Provide a valid Solana wallet address.");
   }
   const shared = Boolean(auctionAddress);
+  const marketConfig = !shared && symbol ? getDemoMarketConfig(symbol) : null;
   const target = shared
     ? symbol
       ? await validateMarketAuctionForDistribution(auctionAddress, symbol)
       : await validateSharedAuctionForDistribution(auctionAddress)
     : null;
+  if (!shared && symbol) {
+    if (!marketConfig) throw new AuctionRoomError("The selected PreStocks product is not supported for Devnet test assets.", 409);
+    const verified = await getVerifiedDemoRecord({ symbol: marketConfig.symbol, mint: marketConfig.mainnetMint });
+    if (verified.status !== "available") throw new AuctionRoomError(verified.reason, 503);
+  }
   const room = shared ? null : await readLiveAuctionRoom();
   const storedLedger = (await readJson(DISTRIBUTION_STATE_PATH)) ?? { version: 1, claims: [] };
   const ledger = { version: 1, claims: normalizeClaims(storedLedger) };
   const decision = shared
     ? globalDistributionDecision({ wallet: wallet.toBase58(), ledger })
-    : distributionDecision({ room, wallet: wallet.toBase58(), ledger });
+    : distributionDecision({ room, market: marketConfig, wallet: wallet.toBase58(), ledger });
   if (!decision.allowed) throw new AuctionRoomError(decision.reason, decision.status === "limited" ? 429 : 409);
   const authority = await loadAuthority();
   if (room?.distributorAuthority && room.distributorAuthority !== authority.publicKey.toBase58()) {
     throw new AuctionRoomError("The distributor authority does not match the active room.", 503);
   }
   const connection = target?.connection ?? new Connection(DEVNET_RPC, "finalized");
-  const baseMintAddress = target?.marketConfig?.testMint ?? DEMO_BASE_MINT;
+  const baseMintAddress = target?.marketConfig?.testMint ?? marketConfig?.testMint ?? DEMO_BASE_MINT;
   const funding = await distributorFundingStatus(connection, authority, baseMintAddress);
   if (!funding.available) throw new AuctionRoomError(funding.reason, 503);
   const baseMint = new PublicKey(baseMintAddress);
@@ -531,7 +620,8 @@ async function distributeTestAssets(walletAddress, auctionAddress = null, symbol
   const signature = await sendFinalized(connection, authority, instructions);
   const claim = {
     wallet: wallet.toBase58(),
-    auctionAddress: target?.auctionAddress ?? room.auctionAddress,
+    auctionAddress: target?.auctionAddress ?? room?.auctionAddress ?? null,
+    marketSymbol: target?.marketConfig?.symbol ?? marketConfig?.symbol ?? null,
     claimedAt: new Date().toISOString(),
     signature,
     baseUnits: DISTRIBUTION_LIMITS.baseUnitsPerClaim,

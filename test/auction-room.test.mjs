@@ -5,7 +5,9 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import {
   DISTRIBUTION_LIMITS,
+  classifyDistributorFundingError,
   distributionDecision,
+  getMarketDistributorStatus,
   getSharedDistributorStatus,
   getDistributorStatus,
   globalDistributionDecision,
@@ -141,6 +143,48 @@ test("asset distribution stops after cutoff and does not use a closed room", () 
   });
   assert.equal(expired.status, "unavailable");
   assert.equal(distributionDecision({ room: null, wallet: "wallet-a", ledger: { claims: [] } }).status, "unavailable");
+});
+
+test("market asset distribution can prepare a wallet without an open auction", () => {
+  const first = distributionDecision({
+    market: { symbol: "SPACEX", testMint: "HwjCQ5qQRGfQsknMRKT8Uc6iLU7XwzuNK9NSMtLmmUqc" },
+    wallet: "wallet-new",
+    ledger: { claims: [] },
+  });
+  assert.equal(first.allowed, true);
+  const repeated = distributionDecision({
+    market: { symbol: "SPACEX" },
+    wallet: "wallet-new",
+    ledger: { claims: [{ wallet: "wallet-new" }] },
+  });
+  assert.equal(repeated.status, "limited");
+  assert.match(repeated.reason, /already claimed/);
+});
+
+test("distributor distinguishes Devnet RPC rate limits from missing mint configuration", () => {
+  assert.match(classifyDistributorFundingError(new Error("429 Too Many Requests")), /rate-limited/);
+  assert.match(classifyDistributorFundingError(new Error("TokenInvalidAccountData")), /test mints are currently unavailable/);
+});
+
+test("market distributor tells an already-claimed wallet why it cannot claim again", async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "callwindow-market-distributor-"));
+  const keyPath = path.join(directory, "authority.json");
+  const ledgerPath = path.join(directory, "claims.json");
+  await writeFile(keyPath, "[]");
+  await writeFile(ledgerPath, JSON.stringify({ claims: [{ wallet: "wallet-a" }] }));
+  const status = await getMarketDistributorStatus("SPACEX", {
+    wallet: "wallet-a",
+    keyPath,
+    ledgerPath,
+    marketFetchImpl: async () => new Response(JSON.stringify([{
+      name: "SpaceX PreStocks",
+      symbol: "SPACEX",
+      contract_address: "PreANxuXjsy2pvisWWMNB6YaJNzr7681wJJr2rHsfTh",
+      external_url: "https://prestocks.com/spacex",
+    }]), { headers: { "content-type": "application/json" } }),
+  });
+  assert.equal(status.status, "limited");
+  assert.match(status.reason, /already claimed/);
 });
 
 test("distributor status exposes an exhausted cap instead of a usable CTA", async () => {

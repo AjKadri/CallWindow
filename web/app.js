@@ -755,9 +755,15 @@ function renderFundingAvailability() {
     const windowOpen = state.auction?.state === 0
       && BigInt(Math.floor(Date.now() / 1000)) < state.auction.cutoffTime;
     if (!windowOpen) {
+      if (isDemoPage && distributor?.scope === "market" && distributor.status === "available") {
+        button.disabled = false;
+        button.textContent = "Get assets for next window";
+        status.textContent = `This ${demoBaseName()} window is closed. Claim once per wallet to prepare for the next ${state.selectedMarket?.symbol ?? "market"} window. No new orders can enter this closed window.`;
+        return;
+      }
       button.disabled = true;
       button.textContent = "Test assets unavailable";
-      status.textContent = "This shared window is no longer open for test-asset claims.";
+      status.textContent = distributor?.reason ?? "This shared window is no longer open for test-asset claims.";
       return;
     }
     if (!distributor || distributor.status !== "available") {
@@ -784,9 +790,21 @@ function renderFundingAvailability() {
     return;
   }
   if (!distributor || distributor.status !== "available") {
+    if (isDemoPage && distributor?.scope === "market") {
+      button.disabled = true;
+      button.textContent = "Test assets unavailable";
+      status.textContent = distributor.reason ?? "The market test-asset distributor is unavailable.";
+      return;
+    }
     button.disabled = true;
     button.textContent = "Test assets unavailable";
     status.textContent = distributor?.reason ?? "No public Auction Room is open.";
+    return;
+  }
+  if (isDemoPage && distributor.scope === "market") {
+    button.disabled = false;
+    button.textContent = "Get assets for next window";
+    status.textContent = `${distributor.remainingClaims} global distribution claim${distributor.remainingClaims === 1 ? "" : "s"} remain. Claim once per wallet to prepare this market's next Devnet window.`;
     return;
   }
   button.disabled = false;
@@ -878,11 +896,13 @@ function setVerifiedDevnetState(auctionAddress, market = state.selectedMarket) {
 }
 
 async function readMarketDistributorStatus(symbol, address) {
-  if (!address) return { status: "unavailable", reason: "No shared Devnet window is configured for this product yet. Create the first funded window from this Demo." };
   try {
-    const query = new URLSearchParams({ symbol, auctionAddress: address });
+    const query = new URLSearchParams({ symbol });
+    if (address) query.set("auctionAddress", address);
+    if (state.walletKey) query.set("wallet", state.walletKey.toBase58());
     const response = await fetch(`/api/auction-room/market-status?${query}`, { cache: "no-store" });
-    return await response.json();
+    const result = await response.json();
+    return result.distributor ?? result;
   } catch {
     return { status: "unavailable", reason: "The market test-asset distributor status is unavailable." };
   }
@@ -900,10 +920,11 @@ async function readMarketWindowReference(symbol) {
 }
 
 function renderMarketAuctionUnavailable(reason) {
+  const marketDistributor = state.distributor?.scope === "market" ? state.distributor : null;
   state.auction = null;
   state.sharedAuction = false;
   state.liveRoom = null;
-  state.distributor = null;
+  state.distributor = marketDistributor;
   if ($("auction-status")) $("auction-status").textContent = "No shared window for this market";
   if ($("auction-summary")) $("auction-summary").textContent = reason;
   if ($("order-rows")) $("order-rows").innerHTML = '<tr><td colspan="6" class="empty-table">Create and finalize a funded opening order to share this market window.</td></tr>';
@@ -917,28 +938,38 @@ function renderMarketAuctionUnavailable(reason) {
 async function loadMarketAuction(address, symbol) {
   const market = state.market?.products?.find((product) => product.symbol === symbol);
   if (!market?.demo) throw new Error("The selected product has no verified CallWindow test-asset mapping.");
+  let marketReference = null;
   if (!address && !legacyAuctionAddress()) {
-    const configured = await readMarketWindowReference(symbol);
-    if (configured.auctionAddress) address = configured.auctionAddress;
+    marketReference = await readMarketWindowReference(symbol);
+    state.distributor = marketReference.distributor ?? null;
+    if (marketReference.auctionAddress) address = marketReference.auctionAddress;
     if (!address) {
       setVerifiedDevnetState(null, market);
-      renderMarketAuctionUnavailable(configured.reason ?? `No shared Devnet window is configured for ${symbol} yet. Create and finalize the opening order below to make the market URL shareable.`);
+      renderMarketAuctionUnavailable(marketReference.reason ?? `No shared Devnet window is configured for ${symbol} yet. Create and finalize the opening order below to make the market URL shareable.`);
       return null;
     }
   }
   setVerifiedDevnetState(address, market);
   state.sharedAuction = Boolean(address);
   state.liveRoom = address ? { source: "shared", auctionAddress: address, status: "shared", marketSymbol: symbol } : null;
-  state.distributor = null;
   if (!address) {
     renderMarketAuctionUnavailable(`No shared Devnet window is configured for ${symbol} yet. Create and finalize the opening order below to make the market URL shareable.`);
     return null;
   }
+  state.distributor = await readMarketDistributorStatus(symbol, address);
   const result = await readDevnetReference();
-  state.distributor = null;
   state.proof = result?.status === "available" ? result.historicalProof : null;
-  const account = await connection.getAccountInfo(new PublicKey(address), "finalized");
-  if (!account) throw new Error("This shared window is not available on devnet.");
+  let account;
+  try {
+    account = await connection.getAccountInfo(new PublicKey(address), "finalized");
+  } catch {
+    renderMarketAuctionUnavailable("The market auction state is currently unavailable on devnet. You can still prepare this market's test assets for its next window.");
+    return null;
+  }
+  if (!account) {
+    renderMarketAuctionUnavailable("This market auction is not available on devnet. You can still prepare this market's test assets for its next window.");
+    return null;
+  }
   const auction = decodeAuction(account.data);
   const validation = validateSharedAuction(auction, {
     accountOwner: account.owner.toBase58(),
@@ -948,7 +979,6 @@ async function loadMarketAuction(address, symbol) {
   });
   if (!validation.ok) throw new Error(validation.reason);
   state.auction = auction;
-  state.distributor = await readMarketDistributorStatus(symbol, address);
   renderFundingAvailability();
   renderProof();
   renderAuction();
@@ -1569,6 +1599,10 @@ async function connectWallet(walletId) {
     renderAuctionSetup();
     updateCreateEstimate();
     refreshWalletBalances();
+    if (isDemoPage && activeMarketSymbol()) {
+      state.distributor = await readMarketDistributorStatus(activeMarketSymbol(), state.devnet?.auctionAddress ?? null);
+      renderFundingAvailability();
+    }
   } catch (errorValue) {
     $("wallet-status").textContent = errorValue instanceof Error ? errorValue.message : "Wallet connection was not completed.";
   }
@@ -1626,9 +1660,11 @@ async function claimTestAssets() {
     const payload = { wallet: state.walletKey.toBase58() };
     if (isDemoPage && activeMarketSymbol()) payload.symbol = activeMarketSymbol();
     const setup = state.setup ?? readAuctionSetup();
-    const claimAuctionAddress = state.sharedAuction
-      ? state.devnet?.auctionAddress
-      : setup && !canShareSetup(setup) ? setup.auctionAddress : null;
+    const windowOpen = state.auction?.state === 0
+      && BigInt(Math.floor(Date.now() / 1000)) < state.auction.cutoffTime;
+    const claimAuctionAddress = windowOpen
+      ? (state.sharedAuction ? state.devnet?.auctionAddress : setup && !canShareSetup(setup) ? setup.auctionAddress : null)
+      : null;
     if (claimAuctionAddress) payload.auctionAddress = claimAuctionAddress;
     const response = await fetch("/api/auction-room/claim", {
       method: "POST",

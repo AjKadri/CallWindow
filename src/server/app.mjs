@@ -8,6 +8,7 @@ import {
   AuctionRoomError,
   claimTestAssets,
   getDistributorStatus,
+  getMarketDistributorStatus,
   getSharedDistributorStatus,
   readConfiguredMarketAuction,
   readLiveAuctionRoom,
@@ -167,6 +168,7 @@ export function createCallWindowServer({ fetchImpl = fetch } = {}) {
     if (url.pathname === "/api/auction-room/market-status") {
       const symbol = url.searchParams.get("symbol") ?? "";
       const auctionAddress = url.searchParams.get("auctionAddress");
+      const wallet = url.searchParams.get("wallet") ?? null;
       if (!symbol) {
         sendJson(response, 400, { status: "unavailable", reason: "A supported PreStocks product symbol is required." });
         return;
@@ -174,7 +176,12 @@ export function createCallWindowServer({ fetchImpl = fetch } = {}) {
       if (!auctionAddress) {
         const configured = await readConfiguredMarketAuction(symbol);
         if (!configured) {
-          sendJson(response, 200, { status: "unavailable", symbol, reason: "No shared Devnet window is configured for this product yet. Create the first funded window from this Demo." });
+          sendJson(response, 200, {
+            status: "unavailable",
+            symbol,
+            reason: "No shared Devnet window is configured for this product yet. Create the first funded window from this Demo.",
+            distributor: await getMarketDistributorStatus(symbol, { wallet, marketFetchImpl: fetchImpl }),
+          });
           return;
         }
         try {
@@ -182,7 +189,7 @@ export function createCallWindowServer({ fetchImpl = fetch } = {}) {
             marketFetchImpl: fetchImpl,
             requireOpen: false,
           });
-          const distributor = await getSharedDistributorStatus(configured.auctionAddress, { symbol, marketFetchImpl: fetchImpl });
+          const distributor = await getMarketDistributorStatus(symbol, { wallet, marketFetchImpl: fetchImpl });
           sendJson(response, 200, {
             symbol,
             auctionAddress: target.auctionAddress,
@@ -196,7 +203,22 @@ export function createCallWindowServer({ fetchImpl = fetch } = {}) {
         }
         return;
       }
-      sendJson(response, 200, { symbol, ...(await getSharedDistributorStatus(auctionAddress, { symbol, marketFetchImpl: fetchImpl })) });
+      try {
+        const target = await validateMarketAuctionForDistribution(auctionAddress, symbol, {
+          marketFetchImpl: fetchImpl,
+          requireOpen: false,
+        });
+        sendJson(response, 200, {
+          symbol,
+          auctionAddress: target.auctionAddress,
+          network: "devnet",
+          state: target.record.state,
+          cutoffTime: target.record.cutoffTime.toString(),
+          distributor: await getMarketDistributorStatus(symbol, { wallet, marketFetchImpl: fetchImpl }),
+        });
+      } catch (error) {
+        sendJson(response, 200, { status: "unavailable", symbol, reason: error.message ?? "The market window could not be verified." });
+      }
       return;
     }
     await serveStatic(response, url.pathname);
