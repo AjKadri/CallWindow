@@ -758,7 +758,7 @@ function renderFundingAvailability() {
       if (isDemoPage && distributor?.scope === "market" && distributor.status === "available") {
         button.disabled = false;
         button.textContent = "Get assets for next window";
-        status.textContent = `This ${demoBaseName()} window is closed. Claim once per wallet to prepare for the next ${state.selectedMarket?.symbol ?? "market"} window. No new orders can enter this closed window.`;
+        status.textContent = `This ${demoBaseName()} window is closed. Claim up to ${distributor.maxClaimsPerWallet} times per wallet to prepare for the next ${state.selectedMarket?.symbol ?? "market"} window. No new orders can enter this closed window.`;
         return;
       }
       button.disabled = true;
@@ -774,7 +774,7 @@ function renderFundingAvailability() {
     }
     button.disabled = false;
     button.textContent = "Get test assets";
-    status.textContent = distributor.remainingClaims + " global distribution claim" + (distributor.remainingClaims === 1 ? "" : "s") + " remain. One claim per wallet across shared windows.";
+    status.textContent = distributor.remainingClaims + " global distribution claim" + (distributor.remainingClaims === 1 ? "" : "s") + ` remain. Up to ${distributor.maxClaimsPerWallet} claims per wallet across shared windows.`;
     return;
   }
   if (creatorSetup) {
@@ -786,7 +786,7 @@ function renderFundingAvailability() {
     }
     button.disabled = false;
     button.textContent = "Get test assets";
-    status.textContent = distributor.remainingClaims + " global distribution claim" + (distributor.remainingClaims === 1 ? "" : "s") + " remain to fund this opening order. One claim per wallet across shared windows.";
+    status.textContent = distributor.remainingClaims + " global distribution claim" + (distributor.remainingClaims === 1 ? "" : "s") + ` remain to fund this opening order. Up to ${distributor.maxClaimsPerWallet} claims per wallet across shared windows.`;
     return;
   }
   if (!distributor || distributor.status !== "available") {
@@ -804,12 +804,12 @@ function renderFundingAvailability() {
   if (isDemoPage && distributor.scope === "market") {
     button.disabled = false;
     button.textContent = "Get assets for next window";
-    status.textContent = `${distributor.remainingClaims} global distribution claim${distributor.remainingClaims === 1 ? "" : "s"} remain. Claim once per wallet to prepare this market's next Devnet window.`;
+    status.textContent = `${distributor.remainingClaims} global distribution claim${distributor.remainingClaims === 1 ? "" : "s"} remain. Claim up to ${distributor.maxClaimsPerWallet} times per wallet to prepare this market's next Devnet window.`;
     return;
   }
   button.disabled = false;
   button.textContent = "Get test assets";
-  status.textContent = distributor.remainingClaims + " distribution claim" + (distributor.remainingClaims === 1 ? "" : "s") + " remain for this window. One claim per wallet.";
+  status.textContent = distributor.remainingClaims + " distribution claim" + (distributor.remainingClaims === 1 ? "" : "s") + ` remain for this window. Up to ${distributor.maxClaimsPerWallet} claims per wallet.`;
 }
 
 function displayUnavailableAuction(reason) {

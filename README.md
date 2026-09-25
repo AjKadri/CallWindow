@@ -53,7 +53,7 @@ CALLWINDOW_MARKET_ROOMS_PATH=target/devnet/market-rooms.json \
 npm run auction:open
 ```
 
-Use the matching allowlisted base mint and name for `OPENAI` or `SPACEX`. The distributor is server-side, devnet-only, and capped at one claim per wallet and 20 total claims. Wallets still need Devnet SOL for fees and token-account rent. Use the [Solana Devnet faucet](https://faucet.solana.com/). Never put the distributor key or runtime manifest in the browser or repository.
+Use the matching allowlisted base mint and name for `OPENAI` or `SPACEX`. The distributor is server-side, devnet-only, and capped at up to 2 claims per wallet and 50 total claims. Wallets still need Devnet SOL for fees and token-account rent. Use the [Solana Devnet faucet](https://faucet.solana.com/). Never put the distributor key or runtime manifest in the browser or repository.
 
 ## Verify the bounded auction
 

@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import {
   DISTRIBUTION_LIMITS,
+  DISTRIBUTION_LEDGER_VERSION,
   classifyDistributorFundingError,
   distributionDecision,
   getMarketDistributorStatus,
@@ -39,11 +40,17 @@ test("live room accepts only the open devnet test-asset configuration", () => {
   }), false);
 });
 
-test("asset distribution permits one claim per wallet and caps the room", () => {
+test("asset distribution allows two claims per wallet and caps the global ledger", () => {
+  assert.equal(DISTRIBUTION_LIMITS.maxClaimsPerWallet, 2);
+  assert.equal(DISTRIBUTION_LIMITS.maxClaimsTotal, 50);
+  assert.equal(DISTRIBUTION_LEDGER_VERSION, 2);
   const first = distributionDecision({ room, wallet: "wallet-a", ledger: { claims: [] } });
   assert.equal(first.allowed, true);
-  const repeated = distributionDecision({ room, wallet: "wallet-a", ledger: { claims: [{ wallet: "wallet-a" }] } });
+  const second = distributionDecision({ room, wallet: "wallet-a", ledger: { claims: [{ wallet: "wallet-a" }] } });
+  assert.equal(second.allowed, true);
+  const repeated = distributionDecision({ room, wallet: "wallet-a", ledger: { claims: [{ wallet: "wallet-a" }, { wallet: "wallet-a" }] } });
   assert.equal(repeated.status, "limited");
+  assert.match(repeated.reason, /2-claim/);
   const full = distributionDecision({
     room,
     wallet: "wallet-new",
@@ -52,15 +59,28 @@ test("asset distribution permits one claim per wallet and caps the room", () => 
   assert.equal(full.status, "limited");
 });
 
-test("global distribution keeps one wallet claim across shared windows", () => {
+test("distribution reset ignores the pre-reset claim ledger version", () => {
+  const decision = globalDistributionDecision({
+    wallet: "wallet-a",
+    ledger: { version: 1, claims: [{ wallet: "wallet-a" }, { wallet: "wallet-a" }] },
+  });
+  assert.equal(decision.allowed, true);
+});
+
+test("global distribution keeps the two-claim wallet limit across shared windows", () => {
   const first = globalDistributionDecision({ wallet: "wallet-a", ledger: { claims: [] } });
   assert.equal(first.allowed, true);
-  const repeated = globalDistributionDecision({
+  const second = globalDistributionDecision({
     wallet: "wallet-a",
     ledger: { claims: [{ wallet: "wallet-a", auctionAddress: "first-auction" }] },
   });
+  assert.equal(second.allowed, true);
+  const repeated = globalDistributionDecision({
+    wallet: "wallet-a",
+    ledger: { claims: [{ wallet: "wallet-a", auctionAddress: "first-auction" }, { wallet: "wallet-a", auctionAddress: "second-auction" }] },
+  });
   assert.equal(repeated.status, "limited");
-  assert.match(repeated.reason, /already claimed/);
+  assert.match(repeated.reason, /2-claim/);
   const legacy = normalizeClaims({
     auctionAddress: "legacy-auction",
     claims: [{ wallet: "wallet-b" }],
@@ -155,10 +175,10 @@ test("market asset distribution can prepare a wallet without an open auction", (
   const repeated = distributionDecision({
     market: { symbol: "SPACEX" },
     wallet: "wallet-new",
-    ledger: { claims: [{ wallet: "wallet-new" }] },
+    ledger: { claims: [{ wallet: "wallet-new" }, { wallet: "wallet-new" }] },
   });
   assert.equal(repeated.status, "limited");
-  assert.match(repeated.reason, /already claimed/);
+  assert.match(repeated.reason, /2-claim/);
 });
 
 test("distributor distinguishes Devnet RPC rate limits from missing mint configuration", () => {
@@ -171,7 +191,7 @@ test("market distributor tells an already-claimed wallet why it cannot claim aga
   const keyPath = path.join(directory, "authority.json");
   const ledgerPath = path.join(directory, "claims.json");
   await writeFile(keyPath, "[]");
-  await writeFile(ledgerPath, JSON.stringify({ claims: [{ wallet: "wallet-a" }] }));
+  await writeFile(ledgerPath, JSON.stringify({ claims: [{ wallet: "wallet-a" }, { wallet: "wallet-a" }] }));
   const status = await getMarketDistributorStatus("SPACEX", {
     wallet: "wallet-a",
     keyPath,
@@ -184,7 +204,7 @@ test("market distributor tells an already-claimed wallet why it cannot claim aga
     }]), { headers: { "content-type": "application/json" } }),
   });
   assert.equal(status.status, "limited");
-  assert.match(status.reason, /already claimed/);
+  assert.match(status.reason, /2-claim/);
 });
 
 test("distributor status exposes an exhausted cap instead of a usable CTA", async () => {

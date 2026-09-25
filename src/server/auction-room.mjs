@@ -38,11 +38,12 @@ export const DISTRIBUTOR_KEY_PATH = process.env.CALLWINDOW_DISTRIBUTOR_KEYFILE
   ?? path.join(ROOT, "target", "devnet", "authority.json");
 
 export const DISTRIBUTION_LIMITS = Object.freeze({
-  maxClaimsPerWallet: 1,
-  maxClaimsTotal: 20,
+  maxClaimsPerWallet: 2,
+  maxClaimsTotal: 50,
   baseUnitsPerClaim: 1000,
   quoteUnitsPerClaim: 50_000_000,
 });
+export const DISTRIBUTION_LEDGER_VERSION = 2;
 export const DEVNET_PROGRAM_ID = ROOM_DEVNET_PROGRAM_ID;
 export const DEMO_BASE_MINT = ROOM_DEMO_BASE_MINT;
 export const DEMO_QUOTE_MINT = MARKET_DEMO_QUOTE_MINT;
@@ -165,6 +166,7 @@ export async function getDistributorStatus(
 }
 
 export function normalizeClaims(ledger) {
+  if (ledger?.version != null && ledger.version !== DISTRIBUTION_LEDGER_VERSION) return [];
   if (!Array.isArray(ledger?.claims)) return [];
   const legacyAuctionAddress = typeof ledger.auctionAddress === "string" ? ledger.auctionAddress : null;
   return ledger.claims.map((claim) => ({
@@ -176,8 +178,13 @@ export function normalizeClaims(ledger) {
 export function globalDistributionDecision({ wallet, ledger, limits = DISTRIBUTION_LIMITS }) {
   if (!wallet) return { allowed: false, status: "invalid", reason: "Connect a devnet wallet first." };
   const claims = normalizeClaims(ledger);
-  if (claims.some((claim) => claim.wallet === wallet)) {
-    return { allowed: false, status: "limited", reason: "This wallet has already claimed test assets." };
+  const walletClaims = claims.filter((claim) => claim.wallet === wallet).length;
+  if (walletClaims >= limits.maxClaimsPerWallet) {
+    return {
+      allowed: false,
+      status: "limited",
+      reason: `This wallet has reached the ${limits.maxClaimsPerWallet}-claim test-asset limit.`,
+    };
   }
   if (claims.length >= limits.maxClaimsTotal) {
     return { allowed: false, status: "limited", reason: "The global test-asset distribution cap has been reached." };
@@ -485,11 +492,12 @@ export async function getMarketDistributorStatus(
   }
   const claims = normalizeClaims(await readJson(ledgerPath));
   const remainingClaims = Math.max(0, DISTRIBUTION_LIMITS.maxClaimsTotal - claims.length);
-  if (wallet && claims.some((claim) => claim.wallet === wallet)) {
+  const walletClaims = wallet ? claims.filter((claim) => claim.wallet === wallet).length : 0;
+  if (wallet && walletClaims >= DISTRIBUTION_LIMITS.maxClaimsPerWallet) {
     return {
       status: "limited",
       scope: "market",
-      reason: "This wallet has already claimed test assets. The global distributor allows one claim per wallet.",
+      reason: `This wallet has reached the ${DISTRIBUTION_LIMITS.maxClaimsPerWallet}-claim test-asset limit.`,
       maxClaimsPerWallet: DISTRIBUTION_LIMITS.maxClaimsPerWallet,
       remainingClaims,
       baseUnitsPerClaim: DISTRIBUTION_LIMITS.baseUnitsPerClaim,
@@ -582,8 +590,8 @@ async function distributeTestAssets(walletAddress, auctionAddress = null, symbol
     if (verified.status !== "available") throw new AuctionRoomError(verified.reason, 503);
   }
   const room = shared ? null : await readLiveAuctionRoom();
-  const storedLedger = (await readJson(DISTRIBUTION_STATE_PATH)) ?? { version: 1, claims: [] };
-  const ledger = { version: 1, claims: normalizeClaims(storedLedger) };
+  const storedLedger = (await readJson(DISTRIBUTION_STATE_PATH)) ?? { version: DISTRIBUTION_LEDGER_VERSION, claims: [] };
+  const ledger = { version: DISTRIBUTION_LEDGER_VERSION, claims: normalizeClaims(storedLedger) };
   const decision = shared
     ? globalDistributionDecision({ wallet: wallet.toBase58(), ledger })
     : distributionDecision({ room, market: marketConfig, wallet: wallet.toBase58(), ledger });
@@ -627,7 +635,7 @@ async function distributeTestAssets(walletAddress, auctionAddress = null, symbol
     baseUnits: DISTRIBUTION_LIMITS.baseUnitsPerClaim,
     quoteUnits: DISTRIBUTION_LIMITS.quoteUnitsPerClaim,
   };
-  await persistLedger({ version: 1, claims: [...ledger.claims, claim] });
+  await persistLedger({ version: DISTRIBUTION_LEDGER_VERSION, claims: [...ledger.claims, claim] });
   return {
     status: "available",
     wallet: wallet.toBase58(),
