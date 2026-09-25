@@ -4,6 +4,7 @@ import {
   CREATOR_ESTIMATED_FEES_LAMPORTS,
   evaluateDevnetFunding,
   readDevnetFunding,
+  retryDevnetFundingRead,
 } from "../src/wallet/funding.mjs";
 
 function mockConnection({ account, balance, auctionRent = 2_000n, tokenRent = 500n, ownerAccounts = [null, null] }) {
@@ -65,4 +66,22 @@ test("sufficient wallet clears the creator funding gate", async () => {
 test("funding evaluation keeps an existing account distinct from a missing account", () => {
   assert.equal(evaluateDevnetFunding({ accountExists: true, balanceLamports: 0n, requiredLamports: 1n }).status, "insufficient");
   assert.equal(evaluateDevnetFunding({ accountExists: false, balanceLamports: 0n, requiredLamports: 1n }).status, "missing");
+});
+
+test("funding reads retry a Devnet 429 and do not expose raw RPC noise", async () => {
+  let attempts = 0;
+  const result = await retryDevnetFundingRead(async () => {
+    attempts += 1;
+    if (attempts === 1) throw Object.assign(new Error("failed to get info about account wallet: 429 Connection rate limits exceeded"), { status: 429 });
+    return "ok";
+  }, { delayMs: 0 });
+  assert.equal(result, "ok");
+  assert.equal(attempts, 2);
+});
+
+test("funding reads fail closed after bounded rate-limit retries", async () => {
+  await assert.rejects(
+    () => retryDevnetFundingRead(() => { throw Object.assign(new Error("429 Too Many Requests"), { status: 429 }); }, { maxRetries: 1, delayMs: 0 }),
+    /rate-limited while checking wallet funding.*No transaction was built or signed/,
+  );
 });

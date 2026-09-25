@@ -2,6 +2,40 @@ export const CREATOR_ESTIMATED_FEES_LAMPORTS = 10_000n;
 export const CREATOR_CREATE_FEE_ESTIMATE_LAMPORTS = 5_000n;
 export const CREATOR_OPENING_FEE_ESTIMATE_LAMPORTS = 5_000n;
 
+function isRetryableDevnetFundingError(error) {
+  const message = String(error?.message ?? error ?? "");
+  return error?.status === 429
+    || error?.statusCode === 429
+    || error?.code === 429
+    || /\b429\b|too many requests|rate[- ]?limit|quota|timeout|timed out|ETIMEDOUT|ECONNRESET/i.test(message);
+}
+
+function describeDevnetFundingError(error) {
+  const message = String(error?.message ?? error ?? "");
+  if (/\b429\b|too many requests|rate[- ]?limit|quota/i.test(message)) {
+    return "Solana Devnet RPC is rate-limited while checking wallet funding. No transaction was built or signed. Wait briefly, then retry.";
+  }
+  if (/timeout|timed out|ETIMEDOUT|ECONNRESET/i.test(message)) {
+    return "Solana Devnet RPC did not respond while checking wallet funding. No transaction was built or signed. Wait briefly, then retry.";
+  }
+  return message || "Devnet funding could not be checked. No transaction was built or signed.";
+}
+
+export async function retryDevnetFundingRead(operation, { maxRetries = 2, delayMs = 350 } = {}) {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return await operation();
+    } catch (error) {
+      if (!isRetryableDevnetFundingError(error) || attempt >= maxRetries) {
+        const wrapped = new Error(describeDevnetFundingError(error));
+        wrapped.cause = error;
+        throw wrapped;
+      }
+      await new Promise((resolve) => setTimeout(resolve, delayMs * (attempt + 1)));
+    }
+  }
+}
+
 export function creatorCostEstimate({
   auctionRentLamports,
   tokenRentLamports,
@@ -68,11 +102,11 @@ export async function readDevnetFunding({
   phase = "create-and-opening",
 }) {
   const [account, balanceLamports, auctionRent, tokenRent, ...ownerAccounts] = await Promise.all([
-    connection.getAccountInfo(walletKey, "finalized"),
-    connection.getBalance(walletKey, "finalized"),
-    connection.getMinimumBalanceForRentExemption(auctionAccountSize, "finalized"),
-    connection.getMinimumBalanceForRentExemption(tokenAccountSize, "finalized"),
-    ...ownerTokenAccounts.map((address) => connection.getAccountInfo(address, "finalized")),
+    retryDevnetFundingRead(() => connection.getAccountInfo(walletKey, "finalized")),
+    retryDevnetFundingRead(() => connection.getBalance(walletKey, "finalized")),
+    retryDevnetFundingRead(() => connection.getMinimumBalanceForRentExemption(auctionAccountSize, "finalized")),
+    retryDevnetFundingRead(() => connection.getMinimumBalanceForRentExemption(tokenAccountSize, "finalized")),
+    ...ownerTokenAccounts.map((address) => retryDevnetFundingRead(() => connection.getAccountInfo(address, "finalized"))),
   ]);
   const missingOwnerAccounts = ownerAccounts.filter((accountInfo) => !accountInfo).length;
   const costs = creatorCostEstimate({
