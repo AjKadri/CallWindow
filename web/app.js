@@ -105,6 +105,7 @@ const state = {
   creatorNotice: null,
   creatorDebug: "",
   creatorStage: null,
+  creatorBusy: false,
   busy: false,
 };
 
@@ -1010,23 +1011,24 @@ async function loadSharedAuction(address) {
   renderProof();
   renderAuction();
   refreshWalletBalances();
+  return auction;
 }
 
 async function refreshOpeningWindow(setup) {
-  await loadSharedAuction(setup.auctionAddress);
+  const auction = await loadSharedAuction(setup.auctionAddress);
   const chainTime = await readFinalizedDevnetTime();
   const check = openingWindowStatus({
-    state: state.auction?.state,
-    cutoffTime: state.auction?.cutoffTime,
+    state: auction?.state,
+    cutoffTime: auction?.cutoffTime,
     chainTime,
   });
   if (!check.ok) {
-    const stateLabel = AUCTION_STATES[state.auction?.state] ?? "Unknown state";
-    const error = new Error(`${check.message} Actual Devnet state: ${stateLabel}. Cutoff: ${formatDevnetCutoff(state.auction?.cutoffTime)}. Discard the stale local setup below to start a new window. This only clears browser state and does not recover on-chain account rent.`);
+    const stateLabel = AUCTION_STATES[auction?.state] ?? "Unavailable";
+    const error = new Error(`${check.message} Actual Devnet state: ${stateLabel}. Cutoff: ${formatDevnetCutoff(auction?.cutoffTime)}. Discard the stale local setup below to start a new window. This only clears browser state and does not recover on-chain account rent.`);
     error.setupUsable = false;
     throw error;
   }
-  return { auction: state.auction, chainTime };
+  return { auction, chainTime };
 }
 
 async function loadOperatorAuction(result) {
@@ -1078,7 +1080,7 @@ async function loadOperatorAuction(result) {
 }
 
 async function loadAuction() {
-  if (state.busy) return;
+  if (state.busy || state.creatorBusy) return;
   clearError($("devnet-error"));
   try {
     const hasAuctionQuery = isRoomPage && new URLSearchParams(window.location.search).has("auction");
@@ -2202,6 +2204,7 @@ async function finishOpeningOrder() {
   if (!syncedSetup) return;
   setup = syncedSetup;
   button.disabled = true;
+  state.creatorBusy = true;
   try {
     state.creatorError = null;
     state.creatorNotice = null;
@@ -2257,6 +2260,7 @@ async function finishOpeningOrder() {
     renderAuctionSetup();
     status.textContent = state.creatorError;
   } finally {
+    state.creatorBusy = false;
     const windowClosed = state.auction
       && (state.auction.state !== 0
         || (typeof state.auction.cutoffTime === "bigint" && BigInt(Math.floor(Date.now() / 1_000)) >= state.auction.cutoffTime));

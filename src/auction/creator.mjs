@@ -26,7 +26,15 @@ export function expectedLocalCloseLabel(minutes, nowMs = Date.now(), timeZone) {
 }
 
 export function openingWindowStatus({ state, cutoffTime, chainTime }) {
-  const stateLabel = AUCTION_STATE_LABELS[state] ?? "unrecognized";
+  const stateLabel = AUCTION_STATE_LABELS[state];
+  if (!stateLabel) {
+    return {
+      ok: false,
+      reason: "unavailable",
+      stateLabel: "unavailable",
+      message: "The Devnet auction state could not be verified.",
+    };
+  }
   if (state !== 0) {
     return {
       ok: false,

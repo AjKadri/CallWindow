@@ -32,6 +32,11 @@ test("creator state check stays unavailable when Devnet time or cutoff cannot be
   const unavailable = openingWindowStatus({ state: 0, cutoffTime: null, chainTime: 1_000n });
   assert.equal(unavailable.ok, false);
   assert.equal(unavailable.reason, "unavailable");
+
+  const unknownState = openingWindowStatus({ state: undefined, cutoffTime: 2_000n, chainTime: 1_000n });
+  assert.equal(unknownState.ok, false);
+  assert.equal(unknownState.reason, "unavailable");
+  assert.match(unknownState.message, /state could not be verified/);
 });
 
 test("creator opening action ignores the unrelated closed operator room", () => {
