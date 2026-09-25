@@ -1115,9 +1115,11 @@ function renderAuction() {
     + "Cutoff " + cutoff + " · " + auction.orderCount + " of 32 orders · prices in one-cent ticks.";
   $("candidate-range").textContent = `${formatDollars(auction.firstTickCents / 100)}–${formatDollars(lastTick / 100)}`;
   $("opening-reference").textContent = formatDollars(auction.openingReferenceCents / 100);
-  $("clearing-price").textContent = auction.clearingPriceCents > 0 ? formatDollars(auction.clearingPriceCents / 100) : "No cross";
-  $("matched-quantity").textContent = formatShares(auction.matchedBase);
   const provisional = auction.state === 0;
+  const displayedClearingPrice = provisional ? state.preview.priceCents : auction.clearingPriceCents;
+  const displayedMatchedQuantity = provisional ? state.preview.matchedBase : auction.matchedBase;
+  $("clearing-price").textContent = displayedClearingPrice > 0 ? formatDollars(displayedClearingPrice / 100) : "No cross";
+  $("matched-quantity").textContent = formatShares(displayedMatchedQuantity);
   if ($("clearing-price-label")) $("clearing-price-label").textContent = provisional ? "Provisional clear" : "Final clearing price";
   if ($("matched-quantity-label")) $("matched-quantity-label").textContent = provisional ? "Provisional match" : "Final matched quantity";
   if ($("provisional-clearing-label")) $("provisional-clearing-label").textContent = provisional ? "Provisional clear" : "Final clear";
