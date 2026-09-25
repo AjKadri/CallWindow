@@ -113,6 +113,24 @@ export function canEditOpeningOrder(setup) {
   return Boolean(setup?.createSignature && !setup?.openingSignature);
 }
 
+export function isCreatorSetupClosed({
+  setup,
+  auctionAddress = null,
+  auctionState,
+  cutoffTime,
+  now = BigInt(Math.floor(Date.now() / 1_000)),
+} = {}) {
+  if (!canShareSetup(setup)) return false;
+  const loadedSetup = auctionAddress === setup.auctionAddress;
+  if (loadedSetup && Number.isInteger(auctionState) && auctionState !== 0) return true;
+  const effectiveCutoff = loadedSetup && cutoffTime != null ? cutoffTime : setup.cutoffTime;
+  try {
+    return effectiveCutoff != null && BigInt(now) >= BigInt(effectiveCutoff);
+  } catch {
+    return false;
+  }
+}
+
 export function creatorWindowState({ walletKey, setup, error } = {}) {
   if (!setup) {
     const failure = typeof error === "string" && error.length > 0 ? error : null;

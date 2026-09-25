@@ -30,6 +30,7 @@ import {
 import {
   canShareSetup,
   canEditOpeningOrder,
+  isCreatorSetupClosed,
   creatorWindowState,
   DEMO_BASE_MINT,
   DEMO_QUOTE_MINT,
@@ -1874,6 +1875,12 @@ function renderAuctionSetup() {
     return;
   }
   const ready = canShareSetup(setup);
+  const setupClosed = isCreatorSetupClosed({
+    setup,
+    auctionAddress: state.devnet?.auctionAddress,
+    auctionState: state.auction?.state,
+    cutoffTime: state.auction?.cutoffTime,
+  });
   const openingEditable = canEditOpeningOrder(setup);
   const creatorState = creatorWindowState({ walletKey: walletCanTransact(), setup });
   let savedCutoffTime = null;
@@ -1891,8 +1898,11 @@ function renderAuctionSetup() {
     savedCutoffTime,
   });
   if (createButton) {
-    createButton.disabled = creatorState.buttonDisabled;
-    createButton.textContent = creatorState.buttonText;
+    createButton.disabled = setupClosed ? !walletCanTransact() : creatorState.buttonDisabled;
+    createButton.textContent = setupClosed ? "Start a new window" : creatorState.buttonText;
+    createButton.title = setupClosed
+      ? "Create a new Devnet test-asset window. The closed account remains available through its share link."
+      : "";
   }
   if (finishButton) {
     finishButton.hidden = ready;
@@ -1902,7 +1912,7 @@ function renderAuctionSetup() {
   if (setupSummary) {
     setupSummary.hidden = false;
     setupSummary.textContent = ready
-      ? `Resuming auction account ${compactKey(setup.auctionAddress)}. Orders close at ${formatDevnetCutoff(setup.cutoffTime)}. The cutoff is fixed on-chain from account creation.`
+      ? `Resuming auction account ${compactKey(setup.auctionAddress)}. Orders close at ${formatDevnetCutoff(setup.cutoffTime)}. The cutoff is fixed on-chain from account creation. ${setupClosed ? "This account is closed and remains available for inspection." : ""}`
       : `Resuming auction account ${compactKey(setup.auctionAddress)}. Orders close at ${formatDevnetCutoff(setup.cutoffTime)}. The cutoff is fixed on-chain from account creation; opening side, limit, and quantity remain editable until the opening order is funded.`;
   }
   if (share) {
@@ -1911,6 +1921,11 @@ function renderAuctionSetup() {
   }
   if (shareUrl) shareUrl.textContent = ready ? sharedRoomUrl(window.location.origin, setup.auctionAddress) : "";
   if (status) {
+    const closedSetupStatus = !state.walletKey
+      ? "Connect a wallet to start a new window. The closed room remains available for inspection."
+      : !walletCanTransact()
+        ? walletNetworkReason()
+        : "This window is closed. Open the shareable room to inspect it, or start a new window.";
     const openingStatus = openingState.reason === "wallet"
       ? "Connect the creator wallet to fund this opening order."
       : openingState.reason === "creator-wallet"
@@ -1919,7 +1934,9 @@ function renderAuctionSetup() {
           ? "This creator window is closed or past its cutoff. Discard local setup to start a new window; on-chain account rent is not recovered."
           : null;
     status.textContent = state.creatorError ?? state.creatorNotice ?? (ready
-      ? creatorState.status
+      ? setupClosed
+        ? closedSetupStatus
+        : creatorState.status
       : openingStatus ?? "Auction account " + compactKey(setup.auctionAddress) + " is finalized. Review or edit the opening order, then fund it before sharing.");
   }
   if (ready) renderCreatorReview(null);

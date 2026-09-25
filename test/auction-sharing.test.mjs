@@ -7,6 +7,7 @@ import {
   canEditOpeningOrder,
   canShareSetup,
   creatorWindowState,
+  isCreatorSetupClosed,
   orderRequirements,
   previewAuction,
   sharedRoomUrl,
@@ -67,6 +68,31 @@ test("creator sharing is gated on both finalized signatures", () => {
   assert.equal(canShareSetup({ createSignature: "create" }), false);
   assert.equal(canShareSetup({ openingSignature: "open" }), false);
   assert.equal(canShareSetup({ createSignature: "create", openingSignature: "open" }), true);
+});
+
+test("closed finalized creator setup offers a new window without confusing it with the old room", () => {
+  const setup = {
+    auctionAddress: "creator-auction",
+    createSignature: "create",
+    openingSignature: "open",
+    cutoffTime: "100",
+  };
+  assert.equal(isCreatorSetupClosed({ setup, now: 99n }), false);
+  assert.equal(isCreatorSetupClosed({ setup, now: 100n }), true);
+  assert.equal(isCreatorSetupClosed({
+    setup,
+    auctionAddress: "creator-auction",
+    auctionState: 1,
+    cutoffTime: 999n,
+    now: 100n,
+  }), true);
+  assert.equal(isCreatorSetupClosed({
+    setup,
+    auctionAddress: "operator-auction",
+    auctionState: 1,
+    cutoffTime: 1n,
+    now: 99n,
+  }), false);
 });
 
 test("fresh setup is created first, then only unsigned opening fields remain editable", () => {
