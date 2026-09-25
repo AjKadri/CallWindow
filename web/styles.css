@@ -573,6 +573,16 @@ body {
 .room-create-grid .panel { min-height: 100%; }
 .create-rules-panel { background: linear-gradient(145deg, #f8fffd, #f1f8fb); }
 .room-steps { display: grid; gap: 1px; margin: 0 0 21px; padding: 0; border-top: 1px solid var(--line); list-style: none; }
+.demo-quick-guide { margin: 18px 0 21px; padding: 15px; border: 1px solid #d9ebe6; border-radius: 15px; background: #f5fbfa; }
+.demo-guide-title { margin: 0 0 9px; color: #31584c; font-size: 11px; font-weight: 700; }
+.demo-quick-steps { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.demo-quick-step { display: grid; grid-template-columns: 22px minmax(0, 1fr); gap: 8px; align-items: start; color: #40564d; font-size: 11px; line-height: 1.35; }
+.demo-quick-step span { color: #8a9791; font: 500 10px/1.5 "DM Mono", monospace; }
+.demo-quick-step strong { font-weight: 600; }
+.demo-quick-guide .disclosure { margin: 12px 0 0; font-size: 10px; }
+.demo-joiner-guide { margin: 20px 0 0; padding: 14px 15px; border-left: 2px solid #b6cdbd; background: rgba(255,255,255,.5); }
+.demo-joiner-guide strong { display: block; color: #40564d; font-size: 11px; }
+.demo-joiner-guide p { margin: 5px 0 0; color: #6f7c78; font-size: 10px; line-height: 1.5; }
 .room-step { display: grid; grid-template-columns: 25px minmax(0, 1fr); gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--line); }
 .room-step:last-child { border-bottom: 0; }
 .room-step-number { color: #8a9791; font: 500 10px/1.5 "DM Mono", monospace; }
