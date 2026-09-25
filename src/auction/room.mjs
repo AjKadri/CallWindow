@@ -99,6 +99,14 @@ export function previewAuction(auction) {
   };
 }
 
+export function orderSettlementAction({ auctionState, cutoffTime, now, order, walletKey } = {}) {
+  if (!order || order.claimed || order.status !== ORDER_ACTIVE) return "none";
+  const isOwner = Boolean(walletKey) && order.owner === walletKey;
+  if (auctionState === 0 && BigInt(now) < BigInt(cutoffTime)) return isOwner ? "cancel" : "none";
+  if ([1, 2, 3].includes(auctionState)) return isOwner ? "claim" : "change-wallet";
+  return "none";
+}
+
 export function orderRequirements({ side, quantityBaseUnits, limitPriceCents }) {
   const quantity = BigInt(quantityBaseUnits);
   if (side === 0) return { baseUnits: 0n, quoteUnits: quantity * BigInt(limitPriceCents) * 100n };

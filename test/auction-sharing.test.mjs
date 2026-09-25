@@ -9,6 +9,7 @@ import {
   creatorWindowState,
   isCreatorSetupClosed,
   orderRequirements,
+  orderSettlementAction,
   previewAuction,
   sharedRoomUrl,
   validateSharedAuction,
@@ -62,6 +63,38 @@ test("preview prefers the candidate closest to the opening reference after match
     ],
   }));
   assert.equal(result.priceCents, 2001);
+});
+
+test("settlement actions explain owner-only claims and preserve claim access", () => {
+  const order = { owner: "wallet-owner", status: 0, claimed: false };
+  assert.equal(orderSettlementAction({
+    auctionState: 1,
+    cutoffTime: 100n,
+    now: 200n,
+    order,
+    walletKey: "wallet-owner",
+  }), "claim");
+  assert.equal(orderSettlementAction({
+    auctionState: 1,
+    cutoffTime: 100n,
+    now: 200n,
+    order,
+    walletKey: "wallet-visitor",
+  }), "change-wallet");
+  assert.equal(orderSettlementAction({
+    auctionState: 0,
+    cutoffTime: 200n,
+    now: 100n,
+    order,
+    walletKey: "wallet-owner",
+  }), "cancel");
+  assert.equal(orderSettlementAction({
+    auctionState: 1,
+    cutoffTime: 100n,
+    now: 200n,
+    order: { ...order, claimed: true },
+    walletKey: "wallet-owner",
+  }), "none");
 });
 
 test("creator sharing is gated on both finalized signatures", () => {

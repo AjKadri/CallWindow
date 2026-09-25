@@ -37,6 +37,7 @@ import {
   DEVNET_PROGRAM_ID,
   MAX_ORDER_BASE_UNITS as ROOM_MAX_ORDER_BASE_UNITS,
   orderRequirements,
+  orderSettlementAction,
   previewAuction,
   sharedRoomUrl,
   validateSharedAuction,
@@ -1198,6 +1199,7 @@ function renderOrderRows() {
   }
   for (const order of state.auction.orders) {
     const row = document.createElement("tr");
+    const isOwner = state.walletKey && order.owner === state.walletKey.toBase58();
     const values = [
       [order.side === 0 ? "BUY" : "SELL", order.side === 0 ? "side-buy" : "side-sell"],
       [formatDollars(order.limitPriceCents / 100), ""],
@@ -1208,8 +1210,8 @@ function renderOrderRows() {
         : state.auction.state === 0 && order.status === ORDER_ACTIVE
           ? "Open"
           : state.auction.state === 1
-            ? (order.filledBaseUnits > 0n ? "Filled · claimable" : "Refundable")
-            : "Refundable", ""],
+            ? (order.filledBaseUnits > 0n ? (isOwner ? "Filled · claimable" : "Filled · claimable by owner") : (isOwner ? "Refundable" : "Refundable by owner"))
+            : (isOwner ? "Refundable" : "Refundable by owner"), ""],
     ];
     for (const [value, className] of values) {
       const cell = document.createElement("td");
@@ -1218,19 +1220,28 @@ function renderOrderRows() {
       row.append(cell);
     }
     const actionCell = document.createElement("td");
-    const isOwner = state.walletKey && order.owner === state.walletKey.toBase58();
-    let action = "";
-    if (isOwner && !order.claimed && order.status === ORDER_ACTIVE) {
-      if (state.auction.state === 0 && BigInt(Math.floor(Date.now() / 1000)) < state.auction.cutoffTime) action = "cancel";
-      else if ([1, 2, 3].includes(state.auction.state)) action = "claim";
-    }
-    if (action) {
+    const action = orderSettlementAction({
+      auctionState: state.auction.state,
+      cutoffTime: state.auction.cutoffTime,
+      now: BigInt(Math.floor(Date.now() / 1000)),
+      order,
+      walletKey: state.walletKey?.toBase58(),
+    });
+    if (action === "cancel" || action === "claim") {
       const button = document.createElement("button");
       button.type = "button";
       button.className = "row-action";
       button.dataset.orderAction = action;
       button.dataset.orderIndex = String(order.index);
       button.textContent = action === "cancel" ? "Cancel" : state.auction.state === 1 ? "Claim" : "Refund";
+      actionCell.append(button);
+    } else if (action === "change-wallet") {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "row-action";
+      button.dataset.walletAction = "change";
+      button.textContent = "Change wallet";
+      button.title = "Connect the wallet that placed this order to claim it.";
       actionCell.append(button);
     } else {
       actionCell.textContent = "—";
@@ -2319,6 +2330,11 @@ async function placeOrder(event) {
 }
 
 async function orderRowAction(event) {
+  const walletButton = event.target.closest("[data-wallet-action]");
+  if (walletButton?.dataset.walletAction === "change") {
+    openWalletChooser();
+    return;
+  }
   const button = event.target.closest("[data-order-action]");
   if (!button || !state.walletKey) return;
   button.disabled = true;
