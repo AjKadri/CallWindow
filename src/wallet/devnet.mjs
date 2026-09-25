@@ -109,6 +109,9 @@ export function isAuctionWindowFailure(error) {
 
 export function classifyDevnetProviderError(error, { walletName = "Selected wallet" } = {}) {
   const message = error instanceof Error ? error.message : String(error ?? "");
+  if (isBlockhashFailure(error)) {
+    return "Devnet submission became stale before finalization. CallWindow will request a fresh wallet signature, then retry once.";
+  }
   if (/insufficient lamports|rent[- ]exempt|rent exemption|account.*rent|insufficient funds.*(?:lamport|rent|fee)/i.test(message)) {
     return "Devnet submission failed because this wallet may not have enough devnet SOL for account rent and fees. Fund the wallet from the Solana devnet faucet, then try again.";
   }
@@ -162,12 +165,34 @@ function isRetryableDevnetRequest(error) {
 }
 
 export class DevnetPreflightError extends Error {
-  constructor(message, { details = "", retryable = false } = {}) {
+  constructor(message, { details = "", retryable = false, retryReason = "" } = {}) {
     super(message);
     this.name = "DevnetPreflightError";
     this.details = details;
     this.retryable = retryable;
+    this.retryReason = retryReason;
   }
+}
+
+export async function readDevnetSendDiagnostics(error, connection) {
+  const transactionError = error?.transactionError;
+  let logs = transactionError?.logs ?? error?.logs ?? [];
+  let logReadFailure = "";
+  if (typeof error?.getLogs === "function" && connection) {
+    try {
+      const fetchedLogs = await error.getLogs(connection);
+      if (Array.isArray(fetchedLogs)) logs = fetchedLogs;
+    } catch (logError) {
+      logReadFailure = requestDiagnostic(logError);
+    }
+  }
+  const message = transactionError?.message ?? error?.message ?? String(error ?? "");
+  const details = [
+    message,
+    Array.isArray(logs) && logs.length ? `logs=${JSON.stringify(logs)}` : "",
+    logReadFailure && `getLogs=${logReadFailure}`,
+  ].filter(Boolean).join("; ");
+  return { message, logs: Array.isArray(logs) ? logs : [], details };
 }
 
 function simulationDiagnostic({ err, logs = [] } = {}) {

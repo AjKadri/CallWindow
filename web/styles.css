@@ -175,6 +175,7 @@ select:focus, input:focus, button:focus-visible, a:focus-visible { outline: 3px 
 .funding-status { line-height: 1.5; }
 .funding-status[data-state="progress"] { color: #67766d; }
 .funding-status[data-state="error"] { color: #8a422d; }
+.asset-notice { margin: 10px 0 0 !important; padding: 9px 10px; border: 1px solid #9acdc2; border-radius: 10px; background: #eaf9f5; color: #236b5e !important; font-weight: 600; }
 .transaction-review { margin-top: 18px; border: 1px solid #b8d9d0; border-radius: 14px; padding: 16px; background: #f2fbf8; }
 .transaction-review .eyebrow { margin-bottom: 7px; }
 .transaction-review h4 { margin: 0; color: #31584c; font: 600 16px/1.2 "Manrope", sans-serif; }
@@ -187,6 +188,9 @@ select:focus, input:focus, button:focus-visible, a:focus-visible { outline: 3px 
 .creator-debug { margin-top: 12px; color: #6f7c78; font-size: 10px; }
 .creator-debug summary { cursor: pointer; }
 .creator-debug code { display: block; margin-top: 8px; max-height: 150px; overflow: auto; color: #7b5b4e; font-size: 9px; white-space: pre-wrap; }
+.order-status { min-height: 0; margin: 5px 0 0; color: #67766d; font-size: 10px; line-height: 1.5; }
+.order-status[data-state="error"] { color: #8a422d; }
+.order-status[data-state="success"] { color: #236b5e; font-weight: 600; }
 .order-form { padding-top: 15px; border-top: 1px solid #e6ebe5; }
 .order-form select, .order-form input { min-height: 39px; font-size: 11px; }
 .order-form label { font-size: 10px; }

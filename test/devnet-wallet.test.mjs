@@ -10,6 +10,7 @@ import {
   isBlockhashFailure,
   isAuctionWindowFailure,
   normalizeProviderNetwork,
+  readDevnetSendDiagnostics,
   readProviderNetwork,
   requireDevnetNetwork,
   signAfterDevnetPreflight,
@@ -105,6 +106,52 @@ test("camel-case BlockhashNotFound is classified and retried once before signing
   assert.equal(simulations, 2);
   assert.equal(sends, 1);
   assert.equal(result.result.signature, "hash-2");
+});
+
+test("submission BlockhashNotFound retries with a fresh transaction and signature", async () => {
+  let hashCalls = 0;
+  let builds = 0;
+  let simulations = 0;
+  let signatures = 0;
+  const result = await signAfterDevnetPreflightWithBlockhashRetry({
+    getLatestBlockhash: async () => ({ blockhash: `send-hash-${++hashCalls}`, lastValidBlockHeight: hashCalls }),
+    buildTransaction: async (latest) => ({ recentBlockhash: latest.blockhash, build: ++builds }),
+    simulate: async (transaction) => { simulations += 1; return { value: { err: null }, transaction }; },
+    send: async (transaction) => {
+      signatures += 1;
+      if (signatures === 1) {
+        throw new DevnetPreflightError("Devnet submission became stale", {
+          details: "BlockhashNotFound",
+          retryable: true,
+          retryReason: "submission-blockhash",
+        });
+      }
+      return { signature: transaction.recentBlockhash };
+    },
+  });
+  assert.equal(hashCalls, 2);
+  assert.equal(builds, 2);
+  assert.equal(simulations, 2);
+  assert.equal(signatures, 2);
+  assert.equal(result.result.signature, "send-hash-2");
+});
+
+test("SendTransactionError diagnostics call getLogs and preserve returned logs", async () => {
+  const connection = {};
+  let calls = 0;
+  const error = {
+    message: "Simulation failed. Message: Transaction simulation failed: Blockhash not found.",
+    transactionError: { message: "Transaction simulation failed: Blockhash not found", logs: [] },
+    getLogs: async (receivedConnection) => {
+      calls += 1;
+      assert.equal(receivedConnection, connection);
+      return ["Program log: blockhash not found"];
+    },
+  };
+  const diagnostics = await readDevnetSendDiagnostics(error, connection);
+  assert.equal(calls, 1);
+  assert.deepEqual(diagnostics.logs, ["Program log: blockhash not found"]);
+  assert.match(diagnostics.details, /blockhash not found/);
 });
 
 test("Devnet request failures stay distinct and preserve browser diagnostics", async () => {

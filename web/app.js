@@ -7,6 +7,8 @@ import {
   DevnetPreflightError,
   getInjectedWallets,
   isAuctionWindowFailure,
+  isBlockhashFailure,
+  readDevnetSendDiagnostics,
   signAfterDevnetPreflightWithBlockhashRetry,
   readProviderNetwork,
   requireDevnetNetwork,
@@ -86,6 +88,7 @@ const state = {
   liveRoom: null,
   distributor: null,
   creatorDistributor: null,
+  fundingNotice: "",
   auction: null,
   preview: null,
   sharedAuction: false,
@@ -201,6 +204,46 @@ function renderCreatorDebug() {
   if (!details || !text) return;
   text.textContent = state.creatorDebug;
   details.hidden = !state.creatorDebug;
+}
+
+function renderFundingNotice() {
+  const notice = $("asset-notice");
+  if (!notice) return;
+  notice.hidden = !state.fundingNotice;
+  notice.textContent = state.fundingNotice;
+}
+
+function showFundingNotice(message) {
+  state.fundingNotice = message;
+  renderFundingNotice();
+}
+
+function renderOrderStatus(message = "", stateName = "progress", details = "") {
+  const status = $("order-status");
+  const debug = $("order-debug");
+  const debugText = $("order-debug-text");
+  if (status) {
+    status.textContent = message;
+    status.dataset.state = stateName;
+  }
+  if (debugText) debugText.textContent = details;
+  if (debug) debug.hidden = !details;
+}
+
+function renderOrderReview(review = null) {
+  const container = $("order-review");
+  if (!container) return;
+  if (!review) {
+    container.hidden = true;
+    return;
+  }
+  container.hidden = false;
+  $("order-review-title").textContent = review.action;
+  $("order-review-network").textContent = "Solana Devnet";
+  $("order-review-assets").textContent = review.assets;
+  $("order-review-amount").textContent = review.amount;
+  $("order-review-cutoff").textContent = review.cutoff;
+  $("order-review-note").textContent = review.note;
 }
 
 function sharedAuctionAddress() {
@@ -797,6 +840,10 @@ function resetWalletForChoice(id) {
   state.creatorError = null;
   state.creatorNotice = null;
   state.creatorStage = null;
+  state.fundingNotice = "";
+  renderFundingNotice();
+  renderOrderStatus();
+  renderOrderReview(null);
   $("wallet-status").textContent = "Wallet selected. Connect it to continue.";
   renderWalletNetworkState();
   renderWalletChoices();
@@ -905,7 +952,18 @@ async function readSharedDistributorStatus(address) {
   try {
     const query = new URLSearchParams({ auctionAddress: address });
     const response = await fetch(`/api/auction-room/shared-status?${query}`, { cache: "no-store" });
-    return await response.json();
+    const contentType = response.headers.get("content-type") ?? "";
+    if (!contentType.includes("application/json")) {
+      return {
+        status: "unavailable",
+        reason: `The test-asset distributor service returned HTTP ${response.status}. Restart the CallWindow server, then reload this room.`,
+      };
+    }
+    const result = await response.json();
+    if (!response.ok) {
+      return { status: "unavailable", ...result };
+    }
+    return result;
   } catch {
     return { status: "unavailable", reason: "The shared test-asset distributor status is unavailable." };
   }
@@ -1383,13 +1441,17 @@ async function buildPermissionlessInstruction(name) {
 
 async function submitAndFinalize(instructions, label, { button = null, reload = true, onProgress = null, review = null } = {}) {
   await requireConnectedDevnetWallet();
-  if (review) renderCreatorReview(review);
+  if (review) {
+    renderCreatorReview(review);
+    if (review.action === "Fund devnet order") renderOrderReview(review);
+  }
   state.busy = true;
   renderAuction();
   const actionButton = button ?? $("submit-order");
   const originalLabel = actionButton?.textContent;
   const progress = (stage, message, buttonText = message) => {
     if (onProgress) onProgress(stage, message);
+    if (actionButton === $("submit-order")) renderOrderStatus(message, "progress");
     if (actionButton) actionButton.textContent = buttonText;
   };
   if (actionButton) {
@@ -1433,10 +1495,25 @@ async function submitAndFinalize(instructions, label, { button = null, reload = 
             });
             return { signature: sentSignature };
           } catch (errorValue) {
-            throw new Error(classifyDevnetProviderError(errorValue, { walletName: state.walletName ?? "Selected wallet" }));
+            const diagnostics = await readDevnetSendDiagnostics(errorValue, connection);
+            const diagnosticError = new Error(diagnostics.message);
+            diagnosticError.details = diagnostics.details;
+            if (isBlockhashFailure(diagnosticError)) {
+              throw new DevnetPreflightError(
+                classifyDevnetProviderError(diagnosticError, { walletName: state.walletName ?? "Selected wallet" }),
+                { details: diagnostics.details, retryable: true, retryReason: "submission-blockhash" },
+              );
+            }
+            const submissionError = new Error(classifyDevnetProviderError(diagnosticError, { walletName: state.walletName ?? "Selected wallet" }));
+            submissionError.details = diagnostics.details;
+            throw submissionError;
           }
         },
         onRetry: (errorValue) => {
+          if (errorValue?.retryReason === "submission-blockhash") {
+            progress("preparation", "Devnet rejected the signed blockhash. Requesting a fresh wallet signature…", "Requesting fresh signature…");
+            return;
+          }
           if (errorValue?.retryable) {
             progress("preparation", "Devnet returned a temporary RPC error before signing. Retrying the simulation once…", "Retrying Devnet simulation…");
             return;
@@ -1462,6 +1539,10 @@ async function submitAndFinalize(instructions, label, { button = null, reload = 
     finalized = true;
     rememberTransaction(label, signature);
     renderProof();
+    if (actionButton === $("submit-order")) {
+      renderOrderReview(null);
+      renderOrderStatus("Order finalized on Solana Devnet. The order table will show its current state after refresh.", "success");
+    }
   } finally {
     state.busy = false;
     if (actionButton) {
@@ -1579,6 +1660,10 @@ async function claimTestAssets() {
       headers: { "content-type": "application/json" },
       body: JSON.stringify(payload),
     });
+    const contentType = response.headers.get("content-type") ?? "";
+    if (!contentType.includes("application/json")) {
+      throw new Error(`The test-asset distributor service returned HTTP ${response.status}. Restart the CallWindow server, then reload this room.`);
+    }
     const result = await response.json();
     if (!response.ok || result.status !== "available") {
       if (result?.status === "unavailable" || result?.status === "limited") {
@@ -1588,6 +1673,7 @@ async function claimTestAssets() {
       throw new Error(result.reason ?? "Test-asset distribution was unavailable.");
     }
     status.textContent = "Finalized test assets sent to this wallet.";
+    showFundingNotice("Test assets deposited: 10 DEMO-EQUITY and 50 DEMO-USD are now available in this wallet.");
     if ($("funding-link")) {
       $("funding-link").href = result.explorerUrl;
       $("funding-link").hidden = false;
@@ -2175,9 +2261,23 @@ async function placeOrder(event) {
     if (priceCents < state.auction.firstTickCents || priceCents > lastTick) {
       throw new RangeError(`Limit must be within the auction grid (${formatDollars(state.auction.firstTickCents / 100)}–${formatDollars(lastTick / 100)}).`);
     }
-    await submitAndFinalize(await buildOrderInstruction(side, priceCents, quantity), "Place funded order");
+    const quantityLabel = formatShares(quantity);
+    const priceLabel = formatDollars(priceCents / 100);
+    const review = {
+      action: "Fund devnet order",
+      assets: side === 0 ? "DEMO-USD for DEMO-EQUITY test shares" : "DEMO-EQUITY test shares for DEMO-USD",
+      amount: side === 0
+        ? `${quantityLabel} DEMO-EQUITY at a ${priceLabel} per-share limit. Escrow: ${formatQuoteUnits(quantity * BigInt(priceCents) * 100n)} DEMO-USD.`
+        : `${quantityLabel} DEMO-EQUITY escrowed at a ${priceLabel} per-share minimum.`,
+      cutoff: `Orders close: ${formatDevnetCutoff(state.auction.cutoffTime)}`,
+      note: "This is a Solana Devnet test-asset order. Phantom or Solflare may show unnamed test mints; the in-app labels and exact mint configuration remain authoritative.",
+    };
+    renderOrderStatus("Preparing the funded Devnet order…", "progress");
+    await submitAndFinalize(await buildOrderInstruction(side, priceCents, quantity), "Place funded order", { review });
   } catch (errorValue) {
-    $("wallet-status").textContent = errorValue instanceof Error ? errorValue.message : "Order could not be submitted.";
+    const message = errorValue instanceof Error ? errorValue.message : "Order could not be submitted.";
+    renderOrderStatus(message, "error", errorValue?.details ?? "");
+    $("wallet-status").textContent = message;
   }
 }
 

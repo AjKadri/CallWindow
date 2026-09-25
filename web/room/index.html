@@ -184,6 +184,7 @@
               <strong>Need test assets?</strong>
               <p>Claim once per wallet from the global server cap. Shared windows use only DEMO-EQUITY and DEMO-USD. The distributor authority stays server-side. Get devnet SOL from the public faucet first.</p>
               <div class="funding-actions"><button id="get-test-assets" class="button button-outline button-full" type="button">Get test assets</button><a href="https://faucet.solana.com/" target="_blank" rel="noreferrer">Open devnet faucet ↗</a></div>
+              <p id="asset-notice" class="asset-notice" role="status" aria-live="polite" hidden></p>
               <p id="funding-status" class="funding-status" aria-live="polite"></p>
               <a id="funding-link" class="funding-link" href="#" target="_blank" rel="noreferrer" hidden>View finalized distribution ↗</a>
             </div>
@@ -195,6 +196,19 @@
               <label for="order-quantity">Share quantity</label>
               <div class="amount-input-wrap"><input id="order-quantity" name="quantity" type="number" min="0.01" max="100" step="0.01" value="1.50" required /><span>shares</span></div>
               <p id="escrow-estimate" class="escrow-estimate">Buy orders escrow the full limit value. Sell orders escrow the full share quantity.</p>
+              <div id="order-review" class="transaction-review" aria-live="polite" hidden>
+                <p class="eyebrow">Before signing</p>
+                <h4 id="order-review-title">Review this Devnet action</h4>
+                <dl class="transaction-review-grid">
+                  <div><dt>Network</dt><dd id="order-review-network"></dd></div>
+                  <div><dt>Test assets</dt><dd id="order-review-assets"></dd></div>
+                  <div><dt>Amount</dt><dd id="order-review-amount"></dd></div>
+                  <div><dt>Cutoff</dt><dd id="order-review-cutoff"></dd></div>
+                </dl>
+                <p id="order-review-note" class="disclosure"></p>
+              </div>
+              <p id="order-status" class="order-status" role="status" aria-live="polite"></p>
+              <details id="order-debug" class="creator-debug" hidden><summary>Technical details</summary><code id="order-debug-text"></code></details>
               <button id="submit-order" class="button button-dark button-full" type="submit" disabled>Connect wallet to continue</button>
             </form>
           </aside>
