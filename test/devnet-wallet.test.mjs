@@ -58,6 +58,18 @@ test("unknown provider network stays unreported with manual instructions", async
 test("devnet preflight distinguishes insufficient rent from other failures", () => {
   const insufficient = classifyDevnetSimulation({ err: { InstructionError: [0, "InsufficientFunds"] }, logs: ["insufficient funds for rent"] });
   assert.match(insufficient, /not have enough devnet SOL/);
+  const testAssetShortfall = classifyDevnetSimulation({
+    err: { InstructionError: [2, { Custom: 1 }] },
+    logs: [
+      "Program ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL invoke [1]",
+      "Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA invoke [2]",
+      "Program log: Error: insufficient funds",
+    ],
+  });
+  assert.match(testAssetShortfall, /not have enough DEMO test assets/);
+  assert.doesNotMatch(testAssetShortfall, /devnet SOL/);
+  const ambiguous = classifyDevnetSimulation({ err: { InstructionError: [2, "InsufficientFunds"] } });
+  assert.doesNotMatch(ambiguous, /devnet SOL|DEMO test assets/);
   const other = classifyDevnetSimulation({ err: { InstructionError: [0, "Custom"] }, logs: ["custom program failure"] });
   assert.match(other, /Devnet preflight failed before signing/);
   assert.doesNotMatch(other, /custom program failure/);

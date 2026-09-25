@@ -77,7 +77,12 @@ export function classifyDevnetSimulation({ err, logs = [] } = {}) {
   if (/6008|WindowClosed/i.test(diagnostic)) {
     return "Devnet preflight found that the order window reached its cutoff.";
   }
-  if (/insufficient funds|insufficient lamports|rent[- ]exempt|rent exemption|account.*rent/i.test(diagnostic)) {
+  const tokenProgramFailure = /associated token|TokenkegQfe|TokenzQd|token program/i.test(diagnostic)
+    && /insufficient funds/i.test(diagnostic);
+  if (tokenProgramFailure) {
+    return "Devnet preflight found that this wallet does not have enough DEMO test assets for the opening order. Claim the test assets for this creator window, then retry.";
+  }
+  if (/insufficient lamports|rent[- ]exempt|rent exemption|account.*rent|insufficient funds.*(?:lamport|rent|fee)/i.test(diagnostic)) {
     return "Devnet preflight failed because this wallet may not have enough devnet SOL for account rent and fees. Fund the wallet from the Solana devnet faucet, then try again.";
   }
   if (isBlockhashFailure({ message: diagnostic })) {
@@ -104,7 +109,7 @@ export function isAuctionWindowFailure(error) {
 
 export function classifyDevnetProviderError(error, { walletName = "Selected wallet" } = {}) {
   const message = error instanceof Error ? error.message : String(error ?? "");
-  if (/insufficient funds|insufficient lamports|rent[- ]exempt|rent exemption|account.*rent/i.test(message)) {
+  if (/insufficient lamports|rent[- ]exempt|rent exemption|account.*rent|insufficient funds.*(?:lamport|rent|fee)/i.test(message)) {
     return "Devnet submission failed because this wallet may not have enough devnet SOL for account rent and fees. Fund the wallet from the Solana devnet faucet, then try again.";
   }
   if (/network|cluster|mainnet|devnet/i.test(message)) {

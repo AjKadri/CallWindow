@@ -85,6 +85,7 @@ const state = {
   devnet: null,
   liveRoom: null,
   distributor: null,
+  creatorDistributor: null,
   auction: null,
   preview: null,
   sharedAuction: false,
@@ -809,7 +810,9 @@ function renderFundingAvailability() {
   const button = $("get-test-assets");
   const status = $("funding-status");
   if (!button || !status) return;
-  const distributor = state.distributor;
+  const setup = state.setup ?? readAuctionSetup();
+  const creatorSetup = !state.sharedAuction && setup && !canShareSetup(setup) ? setup : null;
+  const distributor = creatorSetup ? state.creatorDistributor : state.distributor;
   if (state.walletKey && !walletCanTransact()) {
     button.disabled = true;
     button.textContent = `Switch ${state.walletName ?? "wallet"} to Devnet`;
@@ -834,6 +837,18 @@ function renderFundingAvailability() {
     button.disabled = false;
     button.textContent = "Get test assets";
     status.textContent = distributor.remainingClaims + " global distribution claim" + (distributor.remainingClaims === 1 ? "" : "s") + " remain. One claim per wallet across shared windows.";
+    return;
+  }
+  if (creatorSetup) {
+    if (!distributor || distributor.status !== "available") {
+      button.disabled = true;
+      button.textContent = "Test assets unavailable";
+      status.textContent = distributor?.reason ?? "The creator window test-asset distributor is unavailable.";
+      return;
+    }
+    button.disabled = false;
+    button.textContent = "Get test assets";
+    status.textContent = distributor.remainingClaims + " global distribution claim" + (distributor.remainingClaims === 1 ? "" : "s") + " remain to fund this opening order. One claim per wallet across shared windows.";
     return;
   }
   if (!distributor || distributor.status !== "available") {
@@ -1014,6 +1029,11 @@ async function loadAuction() {
       await loadSharedAuction(address);
     } else {
       await loadOperatorAuction(await readDevnetReference() ?? { status: "unavailable", reason: "Devnet state request failed." });
+      state.setup = state.setup ?? readAuctionSetup();
+      state.creatorDistributor = state.setup && !canShareSetup(state.setup)
+        ? await readSharedDistributorStatus(state.setup.auctionAddress)
+        : null;
+      renderFundingAvailability();
     }
     renderAuctionSetup();
   } catch (errorValue) {
@@ -1549,7 +1569,11 @@ async function claimTestAssets() {
   if ($("funding-link")) $("funding-link").hidden = true;
   try {
     const payload = { wallet: state.walletKey.toBase58() };
-    if (state.sharedAuction) payload.auctionAddress = state.devnet?.auctionAddress;
+    const setup = state.setup ?? readAuctionSetup();
+    const claimAuctionAddress = state.sharedAuction
+      ? state.devnet?.auctionAddress
+      : setup && !canShareSetup(setup) ? setup.auctionAddress : null;
+    if (claimAuctionAddress) payload.auctionAddress = claimAuctionAddress;
     const response = await fetch("/api/auction-room/claim", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -1557,7 +1581,10 @@ async function claimTestAssets() {
     });
     const result = await response.json();
     if (!response.ok || result.status !== "available") {
-      if (result?.status === "unavailable" || result?.status === "limited") state.distributor = result;
+      if (result?.status === "unavailable" || result?.status === "limited") {
+        if (claimAuctionAddress && !state.sharedAuction) state.creatorDistributor = result;
+        else state.distributor = result;
+      }
       throw new Error(result.reason ?? "Test-asset distribution was unavailable.");
     }
     status.textContent = "Finalized test assets sent to this wallet.";
