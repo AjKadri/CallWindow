@@ -21,7 +21,6 @@
         <nav class="nav-pill" aria-label="Main navigation">
           <a href="/">Home</a>
           <a class="nav-cta" href="/demo/">Demo</a>
-          <a href="/room/">Room</a>
           <a href="/proof/">Proof</a>
           <a aria-current="page" href="/docs/">Docs</a>
         </nav>
@@ -60,31 +59,32 @@
         <div class="page-heading">
           <p class="section-kicker">Assets and scope</p>
           <h2>The demo tokens are deliberately generic.</h2>
-          <p><strong>DEMO-EQUITY</strong> and <strong>DEMO-USD</strong> are Solana test assets with no equity backing, no company ownership, and no connection to KALSHI or any other PreStocks product. The Demo chooser reads official PreStocks records and requests no-taker mainnet quotes for the selected exact mint. Those observations remain read-only and are never used as auction assets.</p>
+          <p>Each supported product has its own unmistakably named CallWindow Devnet test base mint and the shared DEMO-USD quote mint. These tokens have no equity backing, issuer rights, or monetary value, and they have no connection to KALSHI, OPENAI, SPACEX, or any other PreStocks product. The Demo chooser reads current official records and requests no-taker mainnet quotes for the selected exact mint. Those observations remain read-only and never become auction assets.</p>
         </div>
         <div class="docs-scope-grid">
-          <div><span>Demo base asset</span><code>B6ZoEr92PB58bN1MgTXwjZHBUxCZ895ERVdhFJtSQFcP</code></div>
+          <div><span>Market test assets</span><code>CW-KALSHI-TEST · CW-OPENAI-TEST · CW-SPACEX-TEST</code></div>
           <div><span>Demo quote asset</span><code>7gLQ8vdtYTxbHa4YK9gjjsVe49WiKeH6pi2pV8us8zd4</code></div>
-          <div><span>Read-only mainnet mint</span><code>PreLWGkkeqG1s4HEfFZSy9moCrJ7btsHuUtfcCeoRua</code></div>
+          <div><span>Historical proof pair</span><code>B6ZoEr92PB58bN1MgTXwjZHBUxCZ895ERVdhFJtSQFcP · 7gLQ8vdtYTxbHa4YK9gjjsVe49WiKeH6pi2pV8us8zd4</code></div>
         </div>
       </section>
 
       <section class="docs-section" id="auction-room">
         <div class="page-heading">
-          <p class="section-kicker">Public Auction Room</p>
+          <p class="section-kicker">Market-specific Demo</p>
           <h2>Try one bounded devnet window.</h2>
-          <p>Connect a wallet on Solana devnet, use the faucet for SOL, and claim a capped amount of DEMO-EQUITY and DEMO-USD once for the current window. Submit a funded buy or sell limit before cutoff. After cutoff, anyone can close the window, then an order owner can claim a fill or refund.</p>
+          <p>Choose one of the up to three products returned by the current official API. The selected symbol is mapped server-side to its named CallWindow test mint and DEMO-USD. Connect a wallet on Solana devnet, use the faucet for SOL, and claim a capped amount of that market's test shares and DEMO-USD once per wallet. Submit a funded buy or sell limit before cutoff. After cutoff, anyone can close the window, then an order owner can claim a fill or refund.</p>
         </div>
         <div class="docs-scope-grid">
-          <div><span>Visitor capacity</span><code>30 orders after 2 disclosed test orders</code></div>
+          <div><span>Market routing</span><code>Official symbol + server-side test-mint allowlist</code></div>
+          <div><span>Visitor capacity</span><code>32 funded orders per isolated market window</code></div>
           <div><span>Distribution</span><code>1 claim per wallet · 20 claims per window</code></div>
           <div><span>Funding</span><code>Devnet SOL faucet only · no mainnet transaction</code></div>
         </div>
       </section>
 
       <section class="docs-section docs-cta">
-        <div><p class="section-kicker">Next step</p><h2>See each state in the working surface.</h2><p>The Auction Room is the public test-asset path. The Demo page keeps live PreStocks reference data and no-taker quote checks separate.</p></div>
-        <a class="button primary" href="/room/">Open Auction Room <span aria-hidden="true">↗</span></a>
+        <div><p class="section-kicker">Next step</p><h2>See the selected market and its window together.</h2><p>The Demo keeps official PreStocks reference data and no-taker quote checks read-only, then runs the selected product's separate Devnet test-asset flow below it.</p></div>
+        <a class="button primary" href="/demo/">Open the market Demo <span aria-hidden="true">↗</span></a>
       </section>
 
       <section class="footer-cta" aria-labelledby="footer-cta-title">
@@ -99,8 +99,8 @@
       <footer class="callwindow-footer">
         <div class="callwindow-footer-grid">
           <div class="footer-brand-column"><a class="brand" href="/" aria-label="CallWindow home"><img class="brand-mark" src="/assets/callwindow-symbol.svg" alt="" aria-hidden="true" /><span class="brand-wordmark">CallWindow</span></a><p>Scheduled auctions for patient liquidity.</p></div>
-          <nav class="footer-column" aria-label="Explore"><h2>Explore</h2><a href="/">Home</a><a href="/room/">Auction Room</a><a href="/demo/">Demo</a><a href="/proof/">Proof</a><a href="/docs/">Docs</a></nav>
-          <nav class="footer-column" aria-label="Understand"><h2>Understand</h2><a href="/docs/#liquidity-problem">The liquidity problem</a><a href="/docs/#auction-room">Public Auction Room</a><a href="/#how-it-works">How it works</a><a href="/demo/#market">Read-only PreStocks market</a></nav>
+          <nav class="footer-column" aria-label="Explore"><h2>Explore</h2><a href="/">Home</a><a href="/demo/">Demo</a><a href="/proof/">Proof</a><a href="/docs/">Docs</a></nav>
+          <nav class="footer-column" aria-label="Understand"><h2>Understand</h2><a href="/docs/#liquidity-problem">The liquidity problem</a><a href="/docs/#auction-room">How the market window works</a><a href="/#how-it-works">How it works</a><a href="/demo/#market">Read-only PreStocks market</a></nav>
           <div class="footer-column"><h2>Verify</h2><a href="https://explorer.solana.com/address/GxX6X6zZSQSuxEoTHPwaAmKCcpGRVRiB6ERANHzS7Eq9?cluster=devnet" target="_blank" rel="noreferrer">Public devnet program ↗</a><a href="https://explorer.solana.com/tx/3tMh5qoya4y1JJZC8K85wZzHP12tok8T2CtjPbTHNe8L3cu6L68xD1vNohaq3AzoVZt7qdwzXekJVqbXsUPoBiFm?cluster=devnet" target="_blank" rel="noreferrer">Finalized matched close ↗</a><a href="https://github.com/AjKadri/CallWindow" target="_blank" rel="noreferrer">GitHub repository ↗</a></div>
         </div>
         <p class="footer-status">Verified auction uses Solana devnet test assets. PreStocks market data is a read-only mainnet reference.</p>

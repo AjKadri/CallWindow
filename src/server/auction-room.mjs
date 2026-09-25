@@ -25,10 +25,13 @@ import {
   MAX_PRICE_CENTS,
   MIN_CANDIDATE_TICKS,
 } from "../auction/room.mjs";
+import { getVerifiedDemoRecord } from "./market.mjs";
+import { DEMO_QUOTE_MINT as MARKET_DEMO_QUOTE_MINT, getDemoMarketConfig } from "../market/demo.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 export const DEVNET_RPC = process.env.CALLWINDOW_DEVNET_RPC ?? "https://api.devnet.solana.com";
 export const ROOM_PATH = process.env.CALLWINDOW_ROOM_PATH ?? path.join(ROOT, "target", "devnet", "auction-room.json");
+export const MARKET_ROOMS_PATH = process.env.CALLWINDOW_MARKET_ROOMS_PATH ?? path.join(ROOT, "target", "devnet", "market-rooms.json");
 export const DISTRIBUTION_STATE_PATH = process.env.CALLWINDOW_DISTRIBUTION_STATE_PATH
   ?? path.join(ROOT, "target", "devnet", "auction-room-distributions.json");
 export const DISTRIBUTOR_KEY_PATH = process.env.CALLWINDOW_DISTRIBUTOR_KEYFILE
@@ -42,7 +45,7 @@ export const DISTRIBUTION_LIMITS = Object.freeze({
 });
 export const DEVNET_PROGRAM_ID = ROOM_DEVNET_PROGRAM_ID;
 export const DEMO_BASE_MINT = ROOM_DEMO_BASE_MINT;
-export const DEMO_QUOTE_MINT = ROOM_DEMO_QUOTE_MINT;
+export const DEMO_QUOTE_MINT = MARKET_DEMO_QUOTE_MINT;
 export const MIN_DISTRIBUTOR_LAMPORTS = 5_000_000;
 const DEVNET_FAUCET_URL = "https://faucet.solana.com/";
 const AUCTION_HEADER_SIZE = 216;
@@ -85,6 +88,16 @@ export async function readLiveAuctionRoom() {
   if (!validateLiveAuctionRoom(room)) return null;
   const hasPassedCutoff = room.cutoffTime && Date.parse(room.cutoffTime) <= Date.now();
   return { ...room, status: hasPassedCutoff ? "closed" : "open" };
+}
+
+export async function readConfiguredMarketAuction(symbol, manifestPath = MARKET_ROOMS_PATH) {
+  const marketConfig = getDemoMarketConfig(symbol);
+  if (!marketConfig) return null;
+  const manifest = await readJson(manifestPath);
+  const room = manifest?.markets?.[marketConfig.symbol] ?? null;
+  if (!room || room.network !== "devnet" || room.programId !== DEVNET_PROGRAM_ID || typeof room.auctionAddress !== "string") return null;
+  if (room.mints?.base?.address !== marketConfig.testMint || room.mints?.quote?.address !== marketConfig.quoteMint) return null;
+  return { ...room, symbol: marketConfig.symbol };
 }
 
 export async function getDistributorStatus(
@@ -276,6 +289,60 @@ export async function validateSharedAuctionForDistribution(
   return { auctionAddress: publicKey.toBase58(), connection, record };
 }
 
+export function validateMarketAuctionRecord(
+  record,
+  { accountOwner, marketConfig, programId = DEVNET_PROGRAM_ID, now = Math.floor(Date.now() / 1000), requireOpen = true } = {},
+) {
+  const errors = [];
+  if (!marketConfig) errors.push("The selected PreStocks market is not supported by the CallWindow test-asset allowlist.");
+  if (accountOwner !== programId) errors.push("The market auction account is not owned by the CallWindow devnet program.");
+  if (marketConfig && record?.baseMint !== marketConfig.testMint) errors.push(`The auction does not use the exact ${marketConfig.testName} devnet test mint.`);
+  if (marketConfig && record?.quoteMint !== marketConfig.quoteMint) errors.push("The auction does not use the exact DEMO-USD devnet test mint.");
+  if (!Number.isInteger(record?.firstTickCents) || !Number.isInteger(record?.candidateTickCount)) {
+    errors.push("The market auction grid is unavailable.");
+  } else {
+    const lastTick = record.firstTickCents + record.candidateTickCount - 1;
+    if (record.candidateTickCount < MIN_CANDIDATE_TICKS || record.candidateTickCount > MAX_CANDIDATE_TICKS) errors.push("The market auction exceeds the 101-tick program bound.");
+    if (record.firstTickCents < 1 || lastTick > MAX_PRICE_CENTS) errors.push("The market auction price grid is outside the deployed bounds.");
+    if (record.openingReferenceCents < record.firstTickCents || record.openingReferenceCents > lastTick) errors.push("The market auction opening reference is outside the grid.");
+  }
+  if (!Number.isInteger(record?.orderCount) || record.orderCount < 0 || record.orderCount > MAX_ORDERS) errors.push("The market auction exceeds the 32-order program bound.");
+  if (record?.orderStorageLength !== 32) errors.push("The market auction order storage does not match the deployed bound.");
+  if (requireOpen && record?.state !== 0) errors.push("This market window is no longer open for test-asset claims.");
+  if (requireOpen && (typeof record?.cutoffTime !== "bigint" || record.cutoffTime <= BigInt(now))) errors.push("This market window has passed its cutoff.");
+  return { ok: errors.length === 0, errors, reason: errors[0] ?? null };
+}
+
+export async function validateMarketAuctionForDistribution(
+  auctionAddress,
+  symbol,
+  {
+    connectionFactory = (rpc) => new Connection(rpc, "finalized"),
+    marketFetchImpl = fetch,
+    now = Math.floor(Date.now() / 1000),
+    requireOpen = true,
+  } = {},
+) {
+  const marketConfig = getDemoMarketConfig(symbol);
+  if (!marketConfig) throw new AuctionRoomError("The selected PreStocks product is not supported for a Devnet auction.", 409);
+  const verified = await getVerifiedDemoRecord({ symbol: marketConfig.symbol, mint: marketConfig.mainnetMint }, marketFetchImpl);
+  if (verified.status !== "available") throw new AuctionRoomError(verified.reason, 503);
+  let publicKey;
+  try { publicKey = new PublicKey(auctionAddress); } catch { throw new AuctionRoomError("The market auction URL is invalid.", 409); }
+  const connection = connectionFactory(DEVNET_RPC);
+  let account;
+  try { account = await connection.getAccountInfo(publicKey, "finalized"); } catch { throw new AuctionRoomError("The market auction state is currently unavailable on devnet.", 503); }
+  if (!account) throw new AuctionRoomError("This market auction is not available on devnet.", 409);
+  let record;
+  try { record = readSharedAuctionHeader(account.data); } catch (error) {
+    if (error instanceof AuctionRoomError) throw error;
+    throw new AuctionRoomError("The market auction account could not be decoded.", 409);
+  }
+  const validation = validateMarketAuctionRecord(record, { accountOwner: account.owner.toBase58(), marketConfig, now, requireOpen });
+  if (!validation.ok) throw new AuctionRoomError(validation.reason, 409);
+  return { auctionAddress: publicKey.toBase58(), connection, record, marketConfig, official: verified.record };
+}
+
 async function loadAuthority(keyPath = DISTRIBUTOR_KEY_PATH) {
   const raw = await readJson(keyPath);
   if (!Array.isArray(raw)) throw new AuctionRoomError("The server-side distributor key is unavailable.", 503);
@@ -316,8 +383,8 @@ async function persistLedger(ledger) {
 
 let distributionQueue = Promise.resolve();
 
-export function claimTestAssets(walletAddress, auctionAddress = null) {
-  const operation = distributionQueue.then(() => distributeTestAssets(walletAddress, auctionAddress));
+export function claimTestAssets(walletAddress, auctionAddress = null, symbol = null) {
+  const operation = distributionQueue.then(() => distributeTestAssets(walletAddress, auctionAddress, symbol));
   distributionQueue = operation.catch(() => {});
   return operation;
 }
@@ -325,10 +392,12 @@ export function claimTestAssets(walletAddress, auctionAddress = null) {
 export async function getSharedDistributorStatus(
   auctionAddress,
   {
+    symbol = null,
     keyPath = DISTRIBUTOR_KEY_PATH,
     ledgerPath = DISTRIBUTION_STATE_PATH,
     connectionFactory = (rpc) => new Connection(rpc, "finalized"),
     now = Date.now(),
+    marketFetchImpl = fetch,
   } = {},
 ) {
   if (!auctionAddress) return { status: "unavailable", reason: "A shared auction address is required." };
@@ -337,7 +406,9 @@ export async function getSharedDistributorStatus(
   }
   let target;
   try {
-    target = await validateSharedAuctionForDistribution(auctionAddress, { connectionFactory, now: Math.floor(now / 1000) });
+    target = symbol
+      ? await validateMarketAuctionForDistribution(auctionAddress, symbol, { connectionFactory, now: Math.floor(now / 1000), marketFetchImpl })
+      : await validateSharedAuctionForDistribution(auctionAddress, { connectionFactory, now: Math.floor(now / 1000) });
   } catch (error) {
     return {
       status: "unavailable",
@@ -364,7 +435,7 @@ export async function getSharedDistributorStatus(
   } catch (error) {
     return { status: "unavailable", reason: error.message, solFunding: "faucet", solFaucetUrl: DEVNET_FAUCET_URL };
   }
-  const funding = await distributorFundingStatus(target.connection, authority);
+  const funding = await distributorFundingStatus(target.connection, authority, target.marketConfig?.testMint ?? DEMO_BASE_MINT);
   if (!funding.available) return { status: "unavailable", reason: funding.reason, solFunding: "faucet", solFaucetUrl: DEVNET_FAUCET_URL };
   return {
     status: "available",
@@ -377,7 +448,7 @@ export async function getSharedDistributorStatus(
   };
 }
 
-async function distributorFundingStatus(connection, authority) {
+async function distributorFundingStatus(connection, authority, baseMintAddress = DEMO_BASE_MINT) {
   let balance;
   try {
     balance = await connection.getBalance(authority.publicKey, "finalized");
@@ -387,7 +458,7 @@ async function distributorFundingStatus(connection, authority) {
   if (balance < MIN_DISTRIBUTOR_LAMPORTS) {
     return { available: false, reason: "The test-asset distributor is out of devnet SOL for account rent and fees." };
   }
-  const baseMint = new PublicKey(DEMO_BASE_MINT);
+  const baseMint = new PublicKey(baseMintAddress);
   const quoteMint = new PublicKey(DEMO_QUOTE_MINT);
   try {
     const [baseInfo, quoteInfo] = await Promise.all([
@@ -408,7 +479,7 @@ async function distributorFundingStatus(connection, authority) {
   return { available: true };
 }
 
-async function distributeTestAssets(walletAddress, auctionAddress = null) {
+async function distributeTestAssets(walletAddress, auctionAddress = null, symbol = null) {
   let wallet;
   try {
     wallet = new PublicKey(walletAddress);
@@ -416,7 +487,11 @@ async function distributeTestAssets(walletAddress, auctionAddress = null) {
     throw new AuctionRoomError("Provide a valid Solana wallet address.");
   }
   const shared = Boolean(auctionAddress);
-  const target = shared ? await validateSharedAuctionForDistribution(auctionAddress) : null;
+  const target = shared
+    ? symbol
+      ? await validateMarketAuctionForDistribution(auctionAddress, symbol)
+      : await validateSharedAuctionForDistribution(auctionAddress)
+    : null;
   const room = shared ? null : await readLiveAuctionRoom();
   const storedLedger = (await readJson(DISTRIBUTION_STATE_PATH)) ?? { version: 1, claims: [] };
   const ledger = { version: 1, claims: normalizeClaims(storedLedger) };
@@ -429,9 +504,10 @@ async function distributeTestAssets(walletAddress, auctionAddress = null) {
     throw new AuctionRoomError("The distributor authority does not match the active room.", 503);
   }
   const connection = target?.connection ?? new Connection(DEVNET_RPC, "finalized");
-  const funding = await distributorFundingStatus(connection, authority);
+  const baseMintAddress = target?.marketConfig?.testMint ?? DEMO_BASE_MINT;
+  const funding = await distributorFundingStatus(connection, authority, baseMintAddress);
   if (!funding.available) throw new AuctionRoomError(funding.reason, 503);
-  const baseMint = new PublicKey(DEMO_BASE_MINT);
+  const baseMint = new PublicKey(baseMintAddress);
   const quoteMint = new PublicKey(DEMO_QUOTE_MINT);
   const baseAta = getAssociatedTokenAddressSync(baseMint, wallet, false, TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID);
   const quoteAta = getAssociatedTokenAddressSync(quoteMint, wallet, false, TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID);

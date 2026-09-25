@@ -13,6 +13,8 @@ import {
 import {
   ASSOCIATED_TOKEN_PROGRAM_ID,
   TOKEN_PROGRAM_ID,
+  createAssociatedTokenAccountInstruction,
+  createMintToInstruction,
   getAssociatedTokenAddressSync,
   getMint,
 } from "@solana/spl-token";
@@ -24,9 +26,12 @@ const AUTHORITY_KEY_PATH = process.env.CALLWINDOW_AUTHORITY_KEYFILE ?? path.join
 const BUYER_KEY_PATH = process.env.CALLWINDOW_SEED_BUYER_KEYFILE ?? path.join(KEY_DIR, "buyer.json");
 const SELLER_KEY_PATH = process.env.CALLWINDOW_SEED_SELLER_KEYFILE ?? path.join(KEY_DIR, "seller.json");
 const ROOM_PATH = process.env.CALLWINDOW_ROOM_PATH ?? path.join(KEY_DIR, "auction-room.json");
+const MARKET_SYMBOL = process.env.CALLWINDOW_MARKET_SYMBOL ?? null;
+const MARKET_ROOMS_PATH = process.env.CALLWINDOW_MARKET_ROOMS_PATH ?? path.join(KEY_DIR, "market-rooms.json");
 const PROGRAM_ID = new PublicKey("GxX6X6zZSQSuxEoTHPwaAmKCcpGRVRiB6ERANHzS7Eq9");
-const BASE_MINT = new PublicKey("B6ZoEr92PB58bN1MgTXwjZHBUxCZ895ERVdhFJtSQFcP");
+const BASE_MINT = new PublicKey(process.env.CALLWINDOW_BASE_MINT ?? "B6ZoEr92PB58bN1MgTXwjZHBUxCZ895ERVdhFJtSQFcP");
 const QUOTE_MINT = new PublicKey("7gLQ8vdtYTxbHa4YK9gjjsVe49WiKeH6pi2pV8us8zd4");
+const BASE_NAME = process.env.CALLWINDOW_BASE_NAME ?? "DEMO-EQUITY";
 const FIRST_TICK_CENTS = 1_950;
 const OPENING_REFERENCE_CENTS = 2_000;
 const CANDIDATE_TICK_COUNT = 101;
@@ -178,6 +183,19 @@ async function placeOrder({ auction, vaultAuthority, baseVault, quoteVault, owne
   return sendFinalized(owner, [ix]);
 }
 
+async function ensureTokenBalance(authority, owner, mint, minimumRaw) {
+  const ata = getAssociatedTokenAddressSync(mint, owner.publicKey);
+  const existing = await connection.getAccountInfo(ata, "finalized");
+  const instructions = [];
+  if (!existing) instructions.push(createAssociatedTokenAccountInstruction(authority.publicKey, ata, owner.publicKey, mint));
+  if (existing) {
+    const balance = await connection.getTokenAccountBalance(ata, "finalized").catch(() => ({ value: { amount: "0" } }));
+    if (BigInt(balance.value.amount) >= BigInt(minimumRaw)) return;
+  }
+  instructions.push(createMintToInstruction(mint, ata, authority.publicKey, BigInt(minimumRaw)));
+  return sendFinalized(authority, instructions);
+}
+
 async function closeAuction(authority, auction) {
   const ix = await instruction(PROGRAM_ID, "close_auction", [], [
     { pubkey: auction, isSigner: false, isWritable: true },
@@ -234,6 +252,10 @@ async function main() {
   invariant(baseInfo.decimals === 2 && quoteInfo.decimals === 6, "The devnet test mint decimals changed.");
   invariant(baseInfo.mintAuthority?.equals(authority.publicKey) && quoteInfo.mintAuthority?.equals(authority.publicKey),
     "The devnet test mints are not controlled by the configured authority.");
+  await ensureTokenBalance(authority, buyer, BASE_MINT, 200n);
+  await ensureTokenBalance(authority, buyer, QUOTE_MINT, 40_000_000n);
+  await ensureTokenBalance(authority, seller, BASE_MINT, 200n);
+  await ensureTokenBalance(authority, seller, QUOTE_MINT, 40_000_000n);
   await closePreviousRoomIfNeeded(authority);
   const slot = await connection.getSlot("finalized");
   const chainTime = await connection.getBlockTime(slot);
@@ -262,9 +284,10 @@ async function main() {
     auctionId: String(auctionId),
     createdAt: new Date(chainTime * 1000).toISOString(),
     cutoffTime: new Date(cutoffTime * 1000).toISOString(),
+    marketSymbol: MARKET_SYMBOL,
     mints: {
       base: {
-        name: "DEMO-EQUITY",
+        name: BASE_NAME,
         address: BASE_MINT.toBase58(),
         decimals: 2,
         disclosure: "Solana devnet test asset with no PreStocks backing or monetary value.",
@@ -296,6 +319,13 @@ async function main() {
     },
   };
   await writeFile(ROOM_PATH, JSON.stringify(room, null, 2) + "\n", { mode: 0o600 });
+  if (MARKET_SYMBOL) {
+    let manifest = { version: 1, markets: {} };
+    try { manifest = JSON.parse(await readFile(MARKET_ROOMS_PATH, "utf8")); } catch {}
+    manifest.version = 1;
+    manifest.markets = { ...(manifest.markets ?? {}), [MARKET_SYMBOL]: room };
+    await writeFile(MARKET_ROOMS_PATH, JSON.stringify(manifest, null, 2) + "\n", { mode: 0o600 });
+  }
   process.stdout.write(JSON.stringify(room, null, 2) + "\n");
 }
 

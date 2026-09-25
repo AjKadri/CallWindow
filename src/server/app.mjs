@@ -3,13 +3,15 @@ import { readFile, stat } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { getPreStocksCatalog, getPreStocksQuote } from "./market.mjs";
+import { getPreStocksQuote, getSupportedDemoCatalog } from "./market.mjs";
 import {
   AuctionRoomError,
   claimTestAssets,
   getDistributorStatus,
   getSharedDistributorStatus,
+  readConfiguredMarketAuction,
   readLiveAuctionRoom,
+  validateMarketAuctionForDistribution,
 } from "./auction-room.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
@@ -95,7 +97,7 @@ export function createCallWindowServer({ fetchImpl = fetch } = {}) {
     if (request.method === "POST" && url.pathname === "/api/auction-room/claim") {
       try {
         const body = await readRequestBody(request);
-        sendJson(response, 200, await claimTestAssets(body.wallet, body.auctionAddress ?? null));
+        sendJson(response, 200, await claimTestAssets(body.wallet, body.auctionAddress ?? null, body.symbol ?? null));
       } catch (error) {
         const statusCode = error instanceof AuctionRoomError ? error.statusCode : 500;
         sendJson(response, statusCode, {
@@ -110,7 +112,7 @@ export function createCallWindowServer({ fetchImpl = fetch } = {}) {
       return;
     }
     if (url.pathname === "/api/market") {
-      sendJson(response, 200, await getPreStocksCatalog(fetchImpl));
+      sendJson(response, 200, await getSupportedDemoCatalog(fetchImpl));
       return;
     }
     if (url.pathname === "/api/quote") {
@@ -160,6 +162,41 @@ export function createCallWindowServer({ fetchImpl = fetch } = {}) {
     }
     if (url.pathname === "/api/auction-room/shared-status") {
       sendJson(response, 200, await getSharedDistributorStatus(url.searchParams.get("auctionAddress")));
+      return;
+    }
+    if (url.pathname === "/api/auction-room/market-status") {
+      const symbol = url.searchParams.get("symbol") ?? "";
+      const auctionAddress = url.searchParams.get("auctionAddress");
+      if (!symbol) {
+        sendJson(response, 400, { status: "unavailable", reason: "A supported PreStocks product symbol is required." });
+        return;
+      }
+      if (!auctionAddress) {
+        const configured = await readConfiguredMarketAuction(symbol);
+        if (!configured) {
+          sendJson(response, 200, { status: "unavailable", symbol, reason: "No shared Devnet window is configured for this product yet. Create the first funded window from this Demo." });
+          return;
+        }
+        try {
+          const target = await validateMarketAuctionForDistribution(configured.auctionAddress, symbol, {
+            marketFetchImpl: fetchImpl,
+            requireOpen: false,
+          });
+          const distributor = await getSharedDistributorStatus(configured.auctionAddress, { symbol, marketFetchImpl: fetchImpl });
+          sendJson(response, 200, {
+            symbol,
+            auctionAddress: target.auctionAddress,
+            network: "devnet",
+            state: target.record.state,
+            cutoffTime: target.record.cutoffTime.toString(),
+            distributor,
+          });
+        } catch (error) {
+          sendJson(response, 200, { status: "unavailable", symbol, reason: error.message ?? "The configured market window could not be verified." });
+        }
+        return;
+      }
+      sendJson(response, 200, { symbol, ...(await getSharedDistributorStatus(auctionAddress, { symbol, marketFetchImpl: fetchImpl })) });
       return;
     }
     await serveStatic(response, url.pathname);

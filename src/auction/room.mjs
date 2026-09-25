@@ -23,12 +23,12 @@ function candidateIsBetter(next, current) {
 
 export function validateSharedAuction(
   auction,
-  { accountOwner, programId = DEVNET_PROGRAM_ID } = {},
+  { accountOwner, programId = DEVNET_PROGRAM_ID, baseMint = DEMO_BASE_MINT, quoteMint = DEMO_QUOTE_MINT } = {},
 ) {
   const errors = [];
   if (accountOwner !== programId) errors.push("The account is not owned by the CallWindow devnet program.");
-  if (auction?.baseMint !== DEMO_BASE_MINT || auction?.quoteMint !== DEMO_QUOTE_MINT) {
-    errors.push("The auction does not use the exact DEMO-EQUITY and DEMO-USD devnet mints.");
+  if (auction?.baseMint !== baseMint || auction?.quoteMint !== quoteMint) {
+    errors.push("The auction does not use the exact selected CallWindow test mints.");
   }
   if (!auction || !Number.isInteger(auction.firstTickCents) || !Number.isInteger(auction.candidateTickCount)) {
     errors.push("The auction grid is unavailable.");
@@ -164,4 +164,8 @@ export function creatorWindowState({ walletKey, setup, error } = {}) {
 
 export function sharedRoomUrl(origin, auctionAddress) {
   return new URL(`/room/?auction=${encodeURIComponent(auctionAddress)}`, origin).toString();
+}
+
+export function sharedMarketUrl(origin, symbol, auctionAddress) {
+  return new URL(`/demo/?market=${encodeURIComponent(symbol)}&auction=${encodeURIComponent(auctionAddress)}`, origin).toString();
 }

@@ -5,6 +5,8 @@ import {
   getKalshiRecord,
   getPreStocksCatalog,
   getPreStocksQuote,
+  getSupportedDemoCatalog,
+  getVerifiedDemoRecord,
   JUPITER_ORDER,
   KALSHI_MINT,
   MAINNET_RPC,
@@ -35,7 +37,7 @@ function fakeMarketFetch({ record = kalshiRecord, decimals = 9, quoteStatus = 20
     const url = new URL(input);
     requests.push({ url, init });
     if (url.href === PRESTOCKS_API) {
-      return jsonResponse(record ? [record] : []);
+      return jsonResponse(Array.isArray(record) ? record : record ? [record] : []);
     }
     if (url.origin === new URL(MAINNET_RPC).origin) {
       return jsonResponse({ result: { value: { decimals } } });
@@ -69,6 +71,22 @@ test("catalog exposes verified official products without demo assets", async () 
   assert.equal(catalog.products[0].mint, KALSHI_MINT);
   assert.equal(catalog.products[0].issuerUrl, "https://prestocks.com/kalshi");
   assert.notEqual(catalog.products[0].mint, "B6ZoEr92PB58bN1MgTXwjZHBUxCZ895ERVdhFJtSQFcP");
+});
+
+test("supported demo catalog includes only official products with an allowlisted mint", async () => {
+  const records = [
+    kalshiRecord,
+    { ...kalshiRecord, symbol: "OPENAI", name: "OpenAI PreStocks", contract_address: "PreweJYECqtQwBtpxHL171nL2K6umo692gTm7Q3rpgF", external_url: "https://prestocks.com/openai" },
+    { ...kalshiRecord, symbol: "SPACEX", name: "SpaceX PreStocks", contract_address: "PreANxuXjsy2pvisWWMNB6YaJNzr7681wJJr2rHsfTh", external_url: "https://prestocks.com/spacex" },
+    { ...kalshiRecord, symbol: "UNSUPPORTED", contract_address: "PresTj4Yc2bAR197Er7wz4UUKSfqt6FryBEdAriBoQB", external_url: "https://prestocks.com/unsupported" },
+  ];
+  const { fetchImpl } = fakeMarketFetch({ record: records });
+  const catalog = await getSupportedDemoCatalog(fetchImpl);
+  assert.deepEqual(catalog.products.map((product) => product.symbol), ["KALSHI", "OPENAI", "SPACEX"]);
+  assert.equal(catalog.products.find((product) => product.symbol === "SPACEX").demo.base.name, "CW-SPACEX-TEST");
+  const verified = await getVerifiedDemoRecord({ symbol: "OPENAI", mint: "PreweJYECqtQwBtpxHL171nL2K6umo692gTm7Q3rpgF" }, fetchImpl);
+  assert.equal(verified.status, "available");
+  assert.equal(verified.record.demo.base.address, "5enTWRqREUhrMrnbiobBxpBWkyd5CfLtaMHgfBb876Ar");
 });
 
 test("selected symbol and mint must match the current official record", async () => {

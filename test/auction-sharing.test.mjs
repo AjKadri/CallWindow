@@ -11,6 +11,7 @@ import {
   orderRequirements,
   orderSettlementAction,
   previewAuction,
+  sharedMarketUrl,
   sharedRoomUrl,
   validateSharedAuction,
 } from "../src/auction/room.mjs";
@@ -166,4 +167,9 @@ test("order requirements use deployed mint decimals", () => {
 test("shared room URL carries only the auction address", () => {
   const url = sharedRoomUrl("https://callwindow.example", "9dump5WWF65eMNVt3QNsgcjfku5He9jLwzhUf1Ndp6Gj");
   assert.equal(url, "https://callwindow.example/room/?auction=9dump5WWF65eMNVt3QNsgcjfku5He9jLwzhUf1Ndp6Gj");
+});
+
+test("market share URL carries the verified symbol and auction address together", () => {
+  const url = sharedMarketUrl("https://callwindow.example", "SPACEX", "9dump5WWF65eMNVt3QNsgcjfku5He9jLwzhUf1Ndp6Gj");
+  assert.equal(url, "https://callwindow.example/demo/?market=SPACEX&auction=9dump5WWF65eMNVt3QNsgcjfku5He9jLwzhUf1Ndp6Gj");
 });

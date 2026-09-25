@@ -10,6 +10,7 @@ import {
   getDistributorStatus,
   globalDistributionDecision,
   normalizeClaims,
+  validateMarketAuctionRecord,
   validateSharedAuctionRecord,
   validateLiveAuctionRoom,
 } from "../src/server/auction-room.mjs";
@@ -106,6 +107,30 @@ test("shared distribution accepts only an open exact-mint bounded devnet record"
     state: 1,
     cutoffTime: BigInt(Math.floor(Date.now() / 1000) + 60),
   }, { accountOwner: room.programId }).ok, false);
+});
+
+test("market auction validation keeps each product on its own server allowlisted test mint", () => {
+  const marketConfig = {
+    symbol: "KALSHI",
+    testMint: "J9JEhzraKShKaY6o6Lidi3RKYTRD2G6USV7L5BXuSm5n",
+    testName: "CW-KALSHI-TEST",
+    quoteMint: room.mints.quote.address,
+  };
+  const record = {
+    baseMint: marketConfig.testMint,
+    quoteMint: marketConfig.quoteMint,
+    firstTickCents: 1950,
+    candidateTickCount: 101,
+    openingReferenceCents: 2000,
+    orderCount: 2,
+    orderStorageLength: 32,
+    state: 0,
+    cutoffTime: BigInt(Math.floor(Date.now() / 1000) + 60),
+  };
+  assert.equal(validateMarketAuctionRecord(record, { accountOwner: room.programId, marketConfig }).ok, true);
+  assert.equal(validateMarketAuctionRecord({ ...record, baseMint: room.mints.base.address }, { accountOwner: room.programId, marketConfig }).ok, false);
+  assert.equal(validateMarketAuctionRecord({ ...record, state: 1 }, { accountOwner: room.programId, marketConfig, requireOpen: false }).ok, true);
+  assert.equal(validateMarketAuctionRecord({ ...record, state: 1 }, { accountOwner: room.programId, marketConfig }).ok, false);
 });
 
 test("asset distribution stops after cutoff and does not use a closed room", () => {

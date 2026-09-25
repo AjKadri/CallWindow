@@ -1,14 +1,26 @@
 # CallWindow
 
-CallWindow pairs a live, read-only PreStocks KALSHI record and exact-mint route check with a separate bounded auction demo built for Solana devnet. The escrow-to-claim/refund path is verified on localnet and public devnet using DEMO-EQUITY and DEMO-USD test mints with no equity backing. The real KALSHI mint is never traded or used as an auction asset.
+CallWindow is a market-specific scheduled-auction demo. The Demo reads current official PreStocks records and no-taker Jupiter quotes as a read-only mainnet reference. It settles only named CallWindow test assets on Solana devnet. It never auctions a PreStocks mint or submits a mainnet transaction.
 
-The public devnet funding transfer evidence includes the [buyer transfer](https://explorer.solana.com/tx/2JoncJ6VDLieCHWN3qT1sSLB5jUKt4WiemuKG4qK9Zv9ANix5TGQSUc9sVU3hNpdJk8mqMVrwUwLkJt8F2uSq1Yj?cluster=devnet) for 0.01005 SOL, the [seller transfer](https://explorer.solana.com/tx/62zaZd8z46PL4QnKbgYPRPDDgdkTDQGHUgn6rd7gM3oUuCTo1FKne6uqP9jo8zJm2xCtc63UdQ4kXsUENZvTu2Vs?cluster=devnet) for 0.01004 SOL, and the [20,000-lamport buyer top-up](https://explorer.solana.com/tx/YNyk8i3p153MjCT6AgzEc4u2ga36ekpWJBbiX1akbkUFBhzPWRjZNCc3cyg83ZbvBtNsC6oecrJvttdZPmssWTe?cluster=devnet) after recovery fees. The preflight target was 1.55 SOL for the authority, 0.01005 SOL for the buyer, and 0.01004 SOL for the seller. The executable [public devnet program account](https://explorer.solana.com/address/GxX6X6zZSQSuxEoTHPwaAmKCcpGRVRiB6ERANHzS7Eq9?cluster=devnet) is `GxX6X6zZSQSuxEoTHPwaAmKCcpGRVRiB6ERANHzS7Eq9`, with ProgramData `GJp3fePPNETLxt3QGn6uyeaziFZKJMWGAhqQFaDK6sG5` and 288,048 bytes. The ignored manifest retains the deployment signature, but the transaction details are not currently available from devnet RPC.
+The current official API can expose up to three supported products. The server verifies the official symbol and exact mainnet mint, then maps it to the matching Devnet test mint and shared `DEMO-USD` quote mint:
 
-The complete three-wallet devnet flow finalized once after bounded request pacing and `Retry-After` handling. It reused finalized base mint `B6ZoEr92PB58bN1MgTXwjZHBUxCZ895ERVdhFJtSQFcP` and quote mint `7gLQ8vdtYTxbHa4YK9gjjsVe49WiKeH6pi2pV8us8zd4`, without creating duplicate mints or accounts. The ignored proof manifest at `target/devnet/manifest.json` contains 24 finalized transaction signatures and explorer links, the auction addresses, fees, claims, refunds, and final reconciliation. Close compute was 30,098 CU for the matched auction, 27,912 CU for no-cross, and 88,875 CU at 32 orders and 101 candidate ticks. Final balances were authority 1.94280484 SOL, buyer 0.010 SOL, and seller 0.010 SOL. All six demo vault balances were zero after claims and refunds.
+| Symbol | Official mainnet mint | CallWindow Devnet base mint |
+| --- | --- | --- |
+| KALSHI | `PreLWGkkeqG1s4HEfFZSy9moCrJ7btsHuUtfcCeoRua` | `J9JEhzraKShKaY6o6Lidi3RKYTRD2G6USV7L5BXuSm5n` (`CW-KALSHI-TEST`) |
+| OPENAI | `PreweJYECqtQwBtpxHL171nL2K6umo692gTm7Q3rpgF` | `5enTWRqREUhrMrnbiobBxpBWkyd5CfLtaMHgfBb876Ar` (`CW-OPENAI-TEST`) |
+| SPACEX | `PreANxuXjsy2pvisWWMNB6YaJNzr7681wJJr2rHsfTh` | `HwjCQ5qQRGfQsknMRKT8Uc6iLU7XwzuNK9NSMtLmmUqc` (`CW-SPACEX-TEST`) |
+
+SpaceX appears only when its current official PreStocks record matches the allowlist. Test assets have no issuer backing, rights, or monetary value. The fixed illustrative demo grid is `$19.50` to `$20.50` in one-cent ticks, with at most 32 funded orders and 101 candidate prices. It does not represent a PreStocks price. Seeded orders are disclosed test orders, not organic liquidity or evidence of better execution.
+
+Each supported market has an isolated Demo URL such as `/demo/?market=KALSHI&auction=<devnet-auction-address>`. The legacy `/room/?auction=...` route redirects to Demo without inferring a PreStocks market from a generic auction address.
+
+The public devnet funding transfer evidence includes the [buyer transfer](https://explorer.solana.com/tx/2JoncJ6VDLieCHWN3qT1sSLB5jUKt4WiemuKG4qK9Zv9ANix5TGQSUc9sVU3hNpdJk8mqMVrwUwLkJt8F2uSq1Yj?cluster=devnet) for 0.01005 SOL, the [seller transfer](https://explorer.solana.com/tx/62zaZd8z46PL4QnKbgYPRPDDgdkTDQGHUgn6rd7gM3oUuCTo1FKne6uqP9jo8zJm2xCtc63UdQ4kXsUENZvTu2Vs?cluster=devnet) for 0.01004 SOL, and the [20,000-lamport buyer top-up](https://explorer.solana.com/tx/YNyk8i3p153MjCT6AgzEc4u2ga36ekpWJBbiX1akbkUFBhzPWRjZNCc3cyg83ZbvBtNsC6oecrJvttdZPmssWTe?cluster=devnet) after recovery fees. The preflight target was 1.55 SOL for the authority, 0.01005 SOL for the buyer, and 0.01004 SOL for the seller. The executable [public devnet program account](https://explorer.solana.com/address/GxX6X6zZSQSuxEoTHPwaAmKCcpGRVRiB6ERANHzS7Eq9?cluster=devnet) is `GxX6X6zZSQSuxEoTHPwaAmKCcpGRVRiB6ERANHzS7Eq9`, with ProgramData `GJp3fePPNETLxt3QGn6uyeaziFZKJMWGAhqQFaDK6sG5` and 288,048 bytes.
+
+The complete three-wallet historical devnet flow finalized once after bounded request pacing and `Retry-After` handling. It used the generic proof pair `DEMO-EQUITY` and `DEMO-USD`, without creating duplicate mints or accounts. The tracked proof file contains the public signatures, Explorer links, fees, claims, refunds, and final reconciliation. Close compute was 30,098 CU for the matched auction, 27,912 CU for no-cross, and 88,875 CU at 32 orders and 101 candidate ticks. Final balances were authority 1.94280484 SOL, buyer 0.010 SOL, and seller 0.010 SOL. All six demo vault balances were zero after claims and refunds.
 
 ## Public devnet proof
 
-The verified close transactions are recorded in the ignored [`target/devnet/manifest.json`](target/devnet/manifest.json):
+The verified close transactions are recorded in the tracked [`web/public/devnet-proof.json`](web/public/devnet-proof.json):
 
 - [Matched close](https://explorer.solana.com/tx/3tMh5qoya4y1JJZC8K85wZzHP12tok8T2CtjPbTHNe8L3cu6L68xD1vNohaq3AzoVZt7qdwzXekJVqbXsUPoBiFm?cluster=devnet): 30,098 compute units, 5,000 lamports.
 - [No-cross close](https://explorer.solana.com/tx/2kfe5TFFi6ibjSr1KXqjZWijChi4iKXver9eWDdch8U6LPNvPZJLJGAStj7ApaJ1ZJBMQjF7B4HbqLFqxpSVMGhZ?cluster=devnet): 27,912 compute units, 5,000 lamports.
@@ -27,6 +39,21 @@ npm run dev
 ```
 
 Open the Vite address printed by `npm run dev`. The PreStocks record and Jupiter quote refresh independently. The quote is pinned to the approved mint and requires a successful on-chain decimal lookup and a live no-taker route. If either check fails, the quote panel reports it as unavailable with the reason.
+
+## Provision market windows
+
+Each market window is created with its allowlisted Devnet base mint and shared `DEMO-USD`. The operator keeps the authority and seed-wallet keyfiles outside Git, then writes the ignored `target/devnet/market-rooms.json` manifest used by the server. A clean checkout without that manifest shows an honest unavailable state.
+
+```sh
+CALLWINDOW_CLUSTER=devnet \
+CALLWINDOW_MARKET_SYMBOL=KALSHI \
+CALLWINDOW_BASE_MINT=J9JEhzraKShKaY6o6Lidi3RKYTRD2G6USV7L5BXuSm5n \
+CALLWINDOW_BASE_NAME=CW-KALSHI-TEST \
+CALLWINDOW_MARKET_ROOMS_PATH=target/devnet/market-rooms.json \
+npm run auction:open
+```
+
+Use the matching allowlisted base mint and name for `OPENAI` or `SPACEX`. The distributor is server-side, devnet-only, and capped at one claim per wallet and 20 total claims. Wallets still need Devnet SOL for fees and token-account rent. Use the [Solana Devnet faucet](https://faucet.solana.com/). Never put the distributor key or runtime manifest in the browser or repository.
 
 ## Verify the bounded auction
 

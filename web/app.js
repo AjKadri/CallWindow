@@ -39,7 +39,7 @@ import {
   orderRequirements,
   orderSettlementAction,
   previewAuction,
-  sharedRoomUrl,
+  sharedMarketUrl,
   validateSharedAuction,
 } from "../src/auction/room.mjs";
 
@@ -74,12 +74,13 @@ const TOKEN_ACCOUNT_SIZE = 165;
 const AUCTION_FIRST_TICK_CENTS = 1_950;
 const AUCTION_TICK_COUNT = 101;
 const AUCTION_REFERENCE_CENTS = 2_000;
-const CREATE_SETUP_KEY = "callwindow-auction-setup";
+const CREATE_SETUP_KEY_PREFIX = "callwindow-auction-setup";
 const connection = new Connection(DEVNET_RPC, "finalized");
 const encoder = new TextEncoder();
 
 const $ = (id) => document.getElementById(id);
-const isRoomPage = document.body.dataset.page === "auction-room";
+const isDemoPage = document.body.dataset.page === "demo";
+const isRoomPage = isDemoPage || document.body.dataset.page === "auction-room";
 const state = {
   market: null,
   selectedMarket: null,
@@ -169,9 +170,21 @@ function compactKey(value) {
 function mintName(mint) {
   if (mint === state.selectedMarket?.mint) return state.selectedMarket.symbol;
   if (mint === "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v") return "USDC";
-  if (mint === state.devnet?.mints?.quote?.address) return "DEMO-USD";
-  if (mint === state.devnet?.mints?.base?.address) return "DEMO-EQUITY";
+  if (mint === state.devnet?.mints?.quote?.address) return state.devnet.mints.quote.name;
+  if (mint === state.devnet?.mints?.base?.address) return state.devnet.mints.base.name;
   return compactKey(mint);
+}
+
+function demoBaseName() {
+  return state.devnet?.mints?.base?.name ?? state.selectedMarket?.demo?.base?.name ?? "CallWindow test shares";
+}
+
+function demoQuoteName() {
+  return state.devnet?.mints?.quote?.name ?? state.selectedMarket?.demo?.quote?.name ?? "DEMO-USD";
+}
+
+function demoAssetDisclosure() {
+  return state.selectedMarket?.demo?.disclosure ?? "Solana devnet test assets with no issuer backing, rights, or monetary value.";
 }
 
 function setError(element, message) {
@@ -198,7 +211,7 @@ function renderCreatorReview(review = null) {
   $("creator-review-amount").textContent = review.amount;
   $("creator-review-sol").textContent = review.sol;
   $("creator-review-cutoff").textContent = review.cutoff;
-  $("creator-review-note").textContent = "SOL shown in the wallet pays for Solana account rent and network fees. It does not buy DEMO-EQUITY or DEMO-USD.";
+  $("creator-review-note").textContent = `SOL shown in the wallet pays for Solana account rent and network fees. It does not buy ${demoBaseName()} or ${demoQuoteName()}.`;
 }
 
 function renderCreatorDebug() {
@@ -251,6 +264,7 @@ function renderOrderReview(review = null) {
 
 function sharedAuctionAddress() {
   if (!isRoomPage) return null;
+  if (isDemoPage && new URLSearchParams(window.location.search).has("legacyAuction")) return null;
   const value = new URLSearchParams(window.location.search).get("auction");
   if (!value) return null;
   try {
@@ -260,22 +274,47 @@ function sharedAuctionAddress() {
   }
 }
 
+function sharedMarketSymbol() {
+  if (!isDemoPage) return null;
+  const value = new URLSearchParams(window.location.search).get("market");
+  return value && /^[A-Z0-9]+$/.test(value) ? value : null;
+}
+
+function legacyAuctionAddress() {
+  if (!isDemoPage) return null;
+  const value = new URLSearchParams(window.location.search).get("legacyAuction");
+  return value && /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(value) ? value : null;
+}
+
+function activeMarketSymbol() {
+  return state.selectedMarket?.symbol ?? sharedMarketSymbol();
+}
+
+function creatorSetupKey(symbol = activeMarketSymbol()) {
+  return symbol ? `${CREATE_SETUP_KEY_PREFIX}:${symbol}` : `${CREATE_SETUP_KEY_PREFIX}:legacy`;
+}
+
 function renderRoomHero() {
   if (!isRoomPage) return;
+  const legacy = legacyAuctionAddress();
   const shared = Boolean(sharedAuctionAddress());
   const title = $("room-hero-title");
   const copy = $("room-hero-copy");
-  if (title) title.textContent = shared ? "Join this funded Devnet window." : "Create a funded Devnet window.";
+  if (title) title.textContent = legacy
+    ? "Choose a market before joining a window."
+    : shared ? "Join this funded Devnet window." : "Create a funded Devnet window.";
   if (copy) {
-    copy.textContent = shared
+    copy.textContent = legacy
+      ? `This older Auction Room link (${compactKey(legacy)}) is not assigned to a PreStocks market. Choose a verified product below; CallWindow will not infer one from a generic auction address.`
+      : shared
       ? "This link opens one verified CallWindow auction account. Connect a wallet, check your demo balances, submit a funded limit order before the cutoff, and follow the result through close, claim, or refund."
-      : "Choose an opening order, fund it with DEMO test assets, and share the room after it finalizes. Other wallets can join before the cutoff, then follow the result through close, claim, or refund.";
+      : "Choose a verified market, set an opening order with its named CallWindow test mint, and share the window after it finalizes. Other wallets can join before the cutoff, then follow the result through close, claim, or refund.";
   }
 }
 
 function readAuctionSetup() {
   try {
-    const setup = JSON.parse(sessionStorage.getItem(CREATE_SETUP_KEY) ?? "null");
+    const setup = JSON.parse(sessionStorage.getItem(creatorSetupKey()) ?? "null");
     if (!setup || typeof setup.auctionAddress !== "string") return null;
     if (Number.isInteger(setup.durationMinutes)) return setup;
     if (Number.isInteger(setup.durationSeconds) && setup.durationSeconds > 0) {
@@ -289,12 +328,12 @@ function readAuctionSetup() {
 
 function persistAuctionSetup(setup) {
   state.setup = setup;
-  sessionStorage.setItem(CREATE_SETUP_KEY, JSON.stringify(setup));
+  sessionStorage.setItem(creatorSetupKey(setup.marketSymbol), JSON.stringify(setup));
 }
 
 function clearAuctionSetup() {
   state.setup = null;
-  sessionStorage.removeItem(CREATE_SETUP_KEY);
+  sessionStorage.removeItem(creatorSetupKey());
 }
 
 function renderMarketRecord() {
@@ -312,6 +351,11 @@ function renderMarketRecord() {
   $("market-issuer-link").href = record.issuerUrl;
   $("market-disclosure-link").href = record.issuerUrl;
   $("quote-limit-issuer-link").href = record.issuerUrl;
+  if ($("demo-test-base")) $("demo-test-base").textContent = `${record.demo.base.name} · ${record.demo.base.address}`;
+  if ($("demo-test-quote")) $("demo-test-quote").textContent = `${record.demo.quote.name} · ${record.demo.quote.address}`;
+  if ($("market-url-link")) $("market-url-link").href = `/demo/?market=${encodeURIComponent(record.symbol)}`;
+  if ($("room-base-label")) $("room-base-label").textContent = record.demo.base.name;
+  if ($("room-quote-label")) $("room-quote-label").textContent = record.demo.quote.name;
   updateQuoteSizeControl();
   updateQuoteFormAvailability();
 }
@@ -330,6 +374,11 @@ function setMarketUnavailable(message) {
   $("market-issuer-link").removeAttribute("href");
   $("market-disclosure-link").removeAttribute("href");
   $("quote-limit-issuer-link").removeAttribute("href");
+  if ($("demo-test-base")) $("demo-test-base").textContent = "unavailable";
+  if ($("demo-test-quote")) $("demo-test-quote").textContent = "unavailable";
+  if ($("market-url-link")) $("market-url-link").removeAttribute("href");
+  if ($("room-base-label")) $("room-base-label").textContent = "Selected test shares";
+  if ($("room-quote-label")) $("room-quote-label").textContent = "DEMO-USD";
   $("market-selection-note").textContent = "Verified products are unavailable until the official PreStocks record can be loaded.";
   updateQuoteFormAvailability();
   resetLimitResult();
@@ -351,6 +400,11 @@ function setMarketSelectionUnavailable(message) {
   $("market-issuer-link").removeAttribute("href");
   $("market-disclosure-link").removeAttribute("href");
   $("quote-limit-issuer-link").removeAttribute("href");
+  if ($("demo-test-base")) $("demo-test-base").textContent = "unavailable";
+  if ($("demo-test-quote")) $("demo-test-quote").textContent = "unavailable";
+  if ($("market-url-link")) $("market-url-link").removeAttribute("href");
+  if ($("room-base-label")) $("room-base-label").textContent = "Selected test shares";
+  if ($("room-quote-label")) $("room-quote-label").textContent = "DEMO-USD";
   $("market-selection-note").textContent = message;
   updateQuoteFormAvailability();
   resetLimitResult();
@@ -368,7 +422,8 @@ function filterMarketOptions() {
   const products = state.market?.products ?? [];
   const selection = resolveMarketSelection(products, {
     search,
-    selectedSymbol: state.selectedMarket?.symbol
+    selectedSymbol: sharedMarketSymbol()
+      ?? state.selectedMarket?.symbol
       ?? (products.some((product) => product.symbol === KALSHI_SYMBOL) ? KALSHI_SYMBOL : null),
   });
   selector.replaceChildren();
@@ -393,7 +448,7 @@ function filterMarketOptions() {
   selector.value = selection.selectedSymbol;
   $("market-selection-note").textContent = search.trim()
     ? `${selection.matches.length} verified product${selection.matches.length === 1 ? "" : "s"} match this search.`
-    : "KALSHI is the default featured record from the bounded scan. This is not a liquidity ranking.";
+    : "Choose up to three supported official records. This list is not a liquidity ranking.";
   if (state.selectedMarket?.symbol !== selection.selectedSymbol) selectMarket(selection.selectedSymbol);
 }
 
@@ -404,12 +459,24 @@ function selectMarket(symbol) {
     return;
   }
   state.selectedMarket = record;
+  setVerifiedDevnetState(null, record);
   $("market-selector").value = record.symbol;
   state.quote = null;
   resetLimitResult();
+  state.auction = null;
+  state.distributor = null;
+  state.setup = readAuctionSetup();
   clearError($("market-error"));
   renderMarketRecord();
   renderQuote();
+  if (isDemoPage) {
+    const query = new URLSearchParams(window.location.search);
+    const queryMarket = query.get("market");
+    if (queryMarket !== record.symbol) {
+      history.replaceState(null, "", `/demo/?market=${encodeURIComponent(record.symbol)}`);
+    }
+    loadAuction();
+  }
 }
 
 async function loadMarket() {
@@ -992,22 +1059,80 @@ async function readFinalizedDevnetTime() {
   return BigInt(chainTime);
 }
 
-function setVerifiedDevnetState(auctionAddress) {
+function setVerifiedDevnetState(auctionAddress, market = state.selectedMarket) {
+  const demo = market?.demo;
+  if (!demo) throw new Error("The selected PreStocks product has no verified CallWindow test-asset mapping.");
   state.devnet = {
     network: "devnet",
     programId: DEVNET_PROGRAM_ID,
     auctionAddress,
+    marketSymbol: market.symbol,
+    mainnetMint: market.mint,
     mints: {
-      base: { name: "DEMO-EQUITY", address: DEMO_BASE_MINT, decimals: 2 },
-      quote: { name: "DEMO-USD", address: DEMO_QUOTE_MINT, decimals: 6 },
+      base: { ...demo.base },
+      quote: { ...demo.quote },
     },
   };
 }
 
-async function loadSharedAuction(address) {
+async function readMarketDistributorStatus(symbol, address) {
+  if (!address) return { status: "unavailable", reason: "No shared Devnet window is configured for this product yet. Create the first funded window from this Demo." };
+  try {
+    const query = new URLSearchParams({ symbol, auctionAddress: address });
+    const response = await fetch(`/api/auction-room/market-status?${query}`, { cache: "no-store" });
+    return await response.json();
+  } catch {
+    return { status: "unavailable", reason: "The market test-asset distributor status is unavailable." };
+  }
+}
+
+async function readMarketWindowReference(symbol) {
+  try {
+    const query = new URLSearchParams({ symbol });
+    const response = await fetch(`/api/auction-room/market-status?${query}`, { cache: "no-store" });
+    const result = await response.json();
+    return response.ok ? result : { status: "unavailable", reason: result.reason ?? "The market window reference is unavailable." };
+  } catch {
+    return { status: "unavailable", reason: "The market window reference is unavailable." };
+  }
+}
+
+function renderMarketAuctionUnavailable(reason) {
+  state.auction = null;
+  state.sharedAuction = false;
+  state.liveRoom = null;
+  state.distributor = null;
+  if ($("auction-status")) $("auction-status").textContent = "No shared window for this market";
+  if ($("auction-summary")) $("auction-summary").textContent = reason;
+  if ($("order-rows")) $("order-rows").innerHTML = '<tr><td colspan="6" class="empty-table">Create and finalize a funded opening order to share this market window.</td></tr>';
+  if ($("order-form")) $("order-form").hidden = true;
+  if ($("auction-actions")) $("auction-actions").hidden = true;
+  setError($("devnet-error"), reason);
+  renderFundingAvailability();
+  renderAuctionSetup();
+}
+
+async function loadMarketAuction(address, symbol) {
+  const market = state.market?.products?.find((product) => product.symbol === symbol);
+  if (!market?.demo) throw new Error("The selected product has no verified CallWindow test-asset mapping.");
+  if (!address && !legacyAuctionAddress()) {
+    const configured = await readMarketWindowReference(symbol);
+    if (configured.auctionAddress) address = configured.auctionAddress;
+    if (!address) {
+      setVerifiedDevnetState(null, market);
+      renderMarketAuctionUnavailable(configured.reason ?? `No shared Devnet window is configured for ${symbol} yet. Create and finalize the opening order below to make the market URL shareable.`);
+      return null;
+    }
+  }
+  setVerifiedDevnetState(address, market);
+  state.sharedAuction = Boolean(address);
+  state.liveRoom = address ? { source: "shared", auctionAddress: address, status: "shared", marketSymbol: symbol } : null;
+  state.distributor = null;
+  if (!address) {
+    renderMarketAuctionUnavailable(`No shared Devnet window is configured for ${symbol} yet. Create and finalize the opening order below to make the market URL shareable.`);
+    return null;
+  }
   const result = await readDevnetReference();
-  state.sharedAuction = true;
-  state.liveRoom = { source: "shared", auctionAddress: address, status: "shared" };
   state.distributor = null;
   state.proof = result?.status === "available" ? result.historicalProof : null;
   const account = await connection.getAccountInfo(new PublicKey(address), "finalized");
@@ -1016,16 +1141,23 @@ async function loadSharedAuction(address) {
   const validation = validateSharedAuction(auction, {
     accountOwner: account.owner.toBase58(),
     programId: DEVNET_PROGRAM_ID,
+    baseMint: market.demo.base.address,
+    quoteMint: market.demo.quote.address,
   });
   if (!validation.ok) throw new Error(validation.reason);
-  setVerifiedDevnetState(address);
   state.auction = auction;
-  state.distributor = await readSharedDistributorStatus(address);
+  state.distributor = await readMarketDistributorStatus(symbol, address);
   renderFundingAvailability();
   renderProof();
   renderAuction();
   refreshWalletBalances();
   return auction;
+}
+
+async function loadSharedAuction(address) {
+  const symbol = activeMarketSymbol();
+  if (isDemoPage) return loadMarketAuction(address, symbol);
+  throw new Error("Legacy Auction Room links must be opened from the Demo market URL.");
 }
 
 async function refreshOpeningWindow(setup) {
@@ -1097,11 +1229,22 @@ async function loadAuction() {
   if (state.busy || state.creatorBusy) return;
   clearError($("devnet-error"));
   try {
-    const hasAuctionQuery = isRoomPage && new URLSearchParams(window.location.search).has("auction");
-    if (hasAuctionQuery) {
-      const address = sharedAuctionAddress();
-      if (!address) throw new Error("The shared auction URL is invalid.");
-      await loadSharedAuction(address);
+    if (isDemoPage) {
+      const symbol = activeMarketSymbol();
+      if (!symbol) {
+        renderMarketAuctionUnavailable("Choose a verified PreStocks product before opening a Devnet window.");
+      } else if (legacyAuctionAddress()) {
+        renderMarketAuctionUnavailable(`This legacy Auction Room link is not assigned to ${symbol}. Choose a verified market URL or create a new ${symbol} window here.`);
+      } else {
+        await loadMarketAuction(sharedAuctionAddress(), symbol);
+        state.setup = state.setup ?? readAuctionSetup();
+        state.creatorDistributor = state.setup && !canShareSetup(state.setup)
+          ? await readMarketDistributorStatus(symbol, state.setup.auctionAddress)
+          : null;
+        renderFundingAvailability();
+      }
+    } else if (isRoomPage && new URLSearchParams(window.location.search).has("auction")) {
+      throw new Error("This legacy Auction Room link is no longer market-scoped. Choose a product in Demo.");
     } else {
       await loadOperatorAuction(await readDevnetReference() ?? { status: "unavailable", reason: "Devnet state request failed." });
       state.setup = state.setup ?? readAuctionSetup();
@@ -1336,8 +1479,8 @@ function auctionVaultAddresses(programId, auction) {
 async function buildCreateAuctionInstruction({ auctionId, cutoffTime }) {
   const programId = new PublicKey(DEVNET_PROGRAM_ID);
   const authority = state.walletKey;
-  const baseMint = new PublicKey(DEMO_BASE_MINT);
-  const quoteMint = new PublicKey(DEMO_QUOTE_MINT);
+  const baseMint = new PublicKey(state.devnet.mints.base.address);
+  const quoteMint = new PublicKey(state.devnet.mints.quote.address);
   const auctionIdBytes = encodeU64(auctionId);
   const [auctionKey] = PublicKey.findProgramAddressSync(
     [encoder.encode("auction"), authority.toBytes(), auctionIdBytes],
@@ -1679,6 +1822,7 @@ async function claimTestAssets() {
   if ($("funding-link")) $("funding-link").hidden = true;
   try {
     const payload = { wallet: state.walletKey.toBase58() };
+    if (isDemoPage && activeMarketSymbol()) payload.symbol = activeMarketSymbol();
     const setup = state.setup ?? readAuctionSetup();
     const claimAuctionAddress = state.sharedAuction
       ? state.devnet?.auctionAddress
@@ -1702,7 +1846,7 @@ async function claimTestAssets() {
       throw new Error(result.reason ?? "Test-asset distribution was unavailable.");
     }
     status.textContent = "Finalized test assets sent to this wallet.";
-    showFundingNotice("Test assets deposited: 10 DEMO-EQUITY and 50 DEMO-USD are now available in this wallet.");
+    showFundingNotice(`Test assets deposited: 10 ${demoBaseName()} and 50 ${demoQuoteName()} are now available in this wallet.`);
     if ($("funding-link")) {
       $("funding-link").href = result.explorerUrl;
       $("funding-link").hidden = false;
@@ -1725,9 +1869,9 @@ function updateEscrowEstimate() {
     const price = parseUnits($("order-limit").value, 2);
     if ($("order-side").value === "buy") {
       const quoteUnits = quantity * price * 100n;
-      estimate.textContent = `Escrow required: ${formatQuoteUnits(quoteUnits)} DEMO-USD at this limit.`;
+      estimate.textContent = `Escrow required: ${formatQuoteUnits(quoteUnits)} ${demoQuoteName()} at this limit.`;
     } else {
-      estimate.textContent = `Escrow required: ${formatShares(quantity)} DEMO-EQUITY shares.`;
+      estimate.textContent = `Escrow required: ${formatShares(quantity)} ${demoBaseName()} shares.`;
     }
   } catch (errorValue) {
     estimate.textContent = errorValue instanceof Error ? errorValue.message : "Enter a valid limit and quantity.";
@@ -1768,10 +1912,10 @@ function openingOrderReview(setup, funding) {
   const isBuy = setup.side === 0;
   return {
     action: "Fund opening order",
-    assets: isBuy ? "DEMO-USD for DEMO-EQUITY test shares" : "DEMO-EQUITY test shares for DEMO-USD",
+    assets: isBuy ? `${demoQuoteName()} for ${demoBaseName()} test shares` : `${demoBaseName()} test shares for ${demoQuoteName()}`,
     amount: isBuy
-      ? `${quantity} DEMO-EQUITY at a ${price} per-share limit. Escrow: ${formatQuoteUnits(BigInt(setup.quantityBaseUnits) * BigInt(setup.limitCents) * 100n)} DEMO-USD.`
-      : `${quantity} DEMO-EQUITY escrowed at a ${price} per-share minimum.`,
+      ? `${quantity} ${demoBaseName()} at a ${price} per-share limit. Escrow: ${formatQuoteUnits(BigInt(setup.quantityBaseUnits) * BigInt(setup.limitCents) * 100n)} ${demoQuoteName()}.`
+      : `${quantity} ${demoBaseName()} escrowed at a ${price} per-share minimum.`,
     sol: reviewSolEstimate(funding, "opening"),
     cutoff: `Orders close: ${formatDevnetCutoff(setup.cutoffTime)}`,
   };
@@ -1786,7 +1930,9 @@ function creatorFundingFailure(funding, action = "this action") {
 
 function creatorOwnerTokenAccounts(walletKey = state.walletKey) {
   if (!walletKey) return [];
-  return [DEMO_BASE_MINT, DEMO_QUOTE_MINT].map((mint) => getAssociatedTokenAddressSync(
+  const mints = state.devnet?.mints ?? state.selectedMarket?.demo;
+  if (!mints?.base || !mints?.quote) return [];
+  return [mints.base.address, mints.quote.address].map((mint) => getAssociatedTokenAddressSync(
     new PublicKey(mint),
     walletKey,
     false,
@@ -1945,9 +2091,9 @@ function renderAuctionSetup() {
   }
   if (share) {
     share.hidden = !ready;
-    share.href = sharedRoomUrl(window.location.origin, setup.auctionAddress);
+    share.href = sharedMarketUrl(window.location.origin, setup.marketSymbol ?? activeMarketSymbol(), setup.auctionAddress);
   }
-  if (shareUrl) shareUrl.textContent = ready ? sharedRoomUrl(window.location.origin, setup.auctionAddress) : "";
+  if (shareUrl) shareUrl.textContent = ready ? sharedMarketUrl(window.location.origin, setup.marketSymbol ?? activeMarketSymbol(), setup.auctionAddress) : "";
   if (status) {
     const closedSetupStatus = !state.walletKey
       ? "Connect a wallet to start a new window. The closed room remains available for inspection."
@@ -2007,8 +2153,8 @@ async function updateCreateEstimate() {
       solLine = walletNetworkReason();
     }
     const tokenLine = side === 0
-      ? "Opening buy needs " + formatQuoteUnits(requirement.quoteUnits) + " DEMO-USD at the limit."
-      : "Opening sell needs " + formatShares(requirement.baseUnits) + " DEMO-EQUITY.";
+      ? "Opening buy needs " + formatQuoteUnits(requirement.quoteUnits) + " " + demoQuoteName() + " at the limit."
+      : "Opening sell needs " + formatShares(requirement.baseUnits) + " " + demoBaseName() + ".";
     estimate.textContent = tokenLine + " " + solLine;
   } catch (errorValue) {
     estimate.textContent = errorValue instanceof Error ? errorValue.message : "Enter a valid opening order.";
@@ -2114,7 +2260,7 @@ function discardCreatorSetup() {
   renderCreatorReview(null);
   renderCreatorDebug();
   if (setup && new URLSearchParams(window.location.search).get("auction") === setup.auctionAddress) {
-    history.replaceState(null, "", "/room/");
+    history.replaceState(null, "", `/demo/?market=${encodeURIComponent(setup.marketSymbol ?? activeMarketSymbol() ?? "KALSHI")}`);
   }
   state.sharedAuction = false;
   state.liveRoom = null;
@@ -2164,7 +2310,7 @@ async function createAuctionWindow(event) {
     const built = await buildCreateAuctionInstruction({ auctionId, cutoffTime });
     const review = {
       action: "Create auction account",
-      assets: "DEMO-EQUITY and DEMO-USD test assets",
+      assets: `${demoBaseName()} and ${demoQuoteName()} test assets`,
       amount: "No test tokens move in this account-creation transaction.",
       sol: reviewSolEstimate(state.creatorFunding, "create"),
       cutoff: `Orders close: ${formatDevnetCutoff(cutoffTime)}`,
@@ -2185,13 +2331,16 @@ async function createAuctionWindow(event) {
       limitCents,
       durationMinutes,
       durationSeconds,
+      marketSymbol: state.selectedMarket.symbol,
+      mainnetMint: state.selectedMarket.mint,
+      testBaseMint: state.selectedMarket.demo.base.address,
       cutoffTime: cutoffTime.toString(),
       createSignature,
     };
     persistAuctionSetup(setup);
     state.sharedAuction = true;
     state.liveRoom = { source: "shared", auctionAddress: setup.auctionAddress, status: "shared" };
-    setVerifiedDevnetState(setup.auctionAddress);
+    setVerifiedDevnetState(setup.auctionAddress, state.selectedMarket);
     state.creatorError = null;
     state.creatorStage = "finalization";
     await loadSharedAuction(setup.auctionAddress);
@@ -2261,7 +2410,7 @@ async function finishOpeningOrder() {
     state.creatorNotice = null;
     state.creatorDebug = "";
     state.creatorStage = "finalization";
-    const url = new URL(sharedRoomUrl(window.location.origin, setup.auctionAddress));
+    const url = new URL(sharedMarketUrl(window.location.origin, setup.marketSymbol ?? activeMarketSymbol(), setup.auctionAddress));
     history.replaceState(null, "", url.pathname + url.search);
     renderRoomHero();
     state.sharedAuction = true;
@@ -2313,10 +2462,10 @@ async function placeOrder(event) {
     const priceLabel = formatDollars(priceCents / 100);
     const review = {
       action: "Fund devnet order",
-      assets: side === 0 ? "DEMO-USD for DEMO-EQUITY test shares" : "DEMO-EQUITY test shares for DEMO-USD",
+      assets: side === 0 ? `${demoQuoteName()} for ${demoBaseName()} test shares` : `${demoBaseName()} test shares for ${demoQuoteName()}`,
       amount: side === 0
-        ? `${quantityLabel} DEMO-EQUITY at a ${priceLabel} per-share limit. Escrow: ${formatQuoteUnits(quantity * BigInt(priceCents) * 100n)} DEMO-USD.`
-        : `${quantityLabel} DEMO-EQUITY escrowed at a ${priceLabel} per-share minimum.`,
+        ? `${quantityLabel} ${demoBaseName()} at a ${priceLabel} per-share limit. Escrow: ${formatQuoteUnits(quantity * BigInt(priceCents) * 100n)} ${demoQuoteName()}.`
+        : `${quantityLabel} ${demoBaseName()} escrowed at a ${priceLabel} per-share minimum.`,
       cutoff: `Orders close: ${formatDevnetCutoff(state.auction.cutoffTime)}`,
       note: "This is a Solana Devnet test-asset order. Phantom or Solflare may show unnamed test mints; the in-app labels and exact mint configuration remain authoritative.",
     };
@@ -2386,7 +2535,7 @@ const on = (id, event, handler) => {
   if (element) element.addEventListener(event, handler);
 };
 
-if (!isRoomPage) {
+if (isDemoPage) {
   on("market-search", "input", filterMarketOptions);
   on("market-selector", "change", (event) => selectMarket(event.target.value));
   on("quote-direction", "change", updateQuoteSizeControl);
@@ -2436,13 +2585,14 @@ on("close-auction", "click", closeAuction);
 on("abort-auction", "click", abortAuction);
 window.addEventListener("focus", loadAuction);
 
-if (!isRoomPage) {
+if (isDemoPage) {
   loadMarket();
   updateQuoteSizeControl();
+} else {
+  loadAuction();
 }
 renderRoomHero();
 renderWalletChoices();
-loadAuction();
 renderAuctionSetup();
 updateCreateCutoffPreview();
 updateEscrowEstimate();

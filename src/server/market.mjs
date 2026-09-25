@@ -1,3 +1,5 @@
+import { attachDemoMarket } from "../market/demo.mjs";
+
 export const PRESTOCKS_API = "https://prestocks.com/api/prestocks";
 export const KALSHI_PRODUCT = "https://prestocks.com/kalshi";
 export const KALSHI_MINT = "PreLWGkkeqG1s4HEfFZSy9moCrJ7btsHuUtfcCeoRua";
@@ -6,6 +8,8 @@ export const MAINNET_RPC = "https://api.mainnet-beta.solana.com";
 export const JUPITER_ORDER = "https://api.jup.ag/swap/v2/order";
 
 const REQUEST_TIMEOUT_MS = 12_000;
+const SUPPORTED_CATALOG_CACHE_MS = 30_000;
+let supportedCatalogCache = null;
 
 function observedAt() {
   return new Date().toISOString();
@@ -63,6 +67,31 @@ export async function getPreStocksCatalog(fetchImpl = fetch) {
   } catch (error) {
     return unavailable(PRESTOCKS_API, explainRequestError(error, "PreStocks API"), time);
   }
+}
+
+export async function getSupportedDemoCatalog(fetchImpl = fetch) {
+  if (fetchImpl === fetch && supportedCatalogCache && Date.now() - supportedCatalogCache.cachedAt < SUPPORTED_CATALOG_CACHE_MS) {
+    return supportedCatalogCache.value;
+  }
+  const catalog = await getPreStocksCatalog(fetchImpl);
+  if (catalog.status !== "available") return catalog;
+  const products = catalog.products.map(attachDemoMarket).filter(Boolean);
+  if (!products.length) return unavailable(PRESTOCKS_API, "The official API did not return a supported KALSHI, OPENAI, or SPACEX record", catalog.observedAt);
+  const result = { ...catalog, products };
+  if (fetchImpl === fetch) supportedCatalogCache = { cachedAt: Date.now(), value: result };
+  return result;
+}
+
+export async function getVerifiedDemoRecord({ symbol, mint }, fetchImpl = fetch) {
+  const catalog = await getSupportedDemoCatalog(fetchImpl);
+  if (catalog.status !== "available") return catalog;
+  if (!symbol || !mint) {
+    return unavailable(PRESTOCKS_API, "A supported product symbol and official mainnet mint are required", catalog.observedAt, { symbol: symbol ?? null, mint: mint ?? null });
+  }
+  const record = catalog.products.find((product) => product.symbol === symbol);
+  if (!record) return unavailable(PRESTOCKS_API, `The selected product ${symbol} is not supported by the current official API`, catalog.observedAt, { symbol, mint });
+  if (record.mint !== mint) return unavailable(PRESTOCKS_API, `The selected mint did not match the official ${symbol} record`, catalog.observedAt, { symbol, mint, expectedMint: record.mint });
+  return { status: "available", source: PRESTOCKS_API, observedAt: catalog.observedAt, record };
 }
 
 async function getVerifiedRecord({ symbol, mint }, fetchImpl) {
