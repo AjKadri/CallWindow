@@ -1,4 +1,4 @@
-import { attachDemoMarket } from "../market/demo.mjs";
+import { attachDemoMarket, getDemoMarketConfig, supportedDemoSymbols } from "../market/demo.mjs";
 
 export const PRESTOCKS_API = "https://prestocks.com/api/prestocks";
 export const KALSHI_PRODUCT = "https://prestocks.com/kalshi";
@@ -74,10 +74,37 @@ export async function getSupportedDemoCatalog(fetchImpl = fetch) {
     return supportedCatalogCache.value;
   }
   const catalog = await getPreStocksCatalog(fetchImpl);
-  if (catalog.status !== "available") return catalog;
-  const products = catalog.products.map(attachDemoMarket).filter(Boolean);
-  if (!products.length) return unavailable(PRESTOCKS_API, "The official API did not return a supported KALSHI, OPENAI, or SPACEX record", catalog.observedAt);
-  const result = { ...catalog, products };
+  const records = catalog.status === "available" ? catalog.products : [];
+  const marketOptions = supportedDemoSymbols().map((symbol) => {
+    const config = getDemoMarketConfig(symbol);
+    const record = records.find((candidate) => candidate.symbol === symbol);
+    if (!record) {
+      return {
+        symbol,
+        name: `${symbol} PreStocks`,
+        status: "unavailable",
+        reason: catalog.status === "available"
+          ? `The current official API did not return a ${symbol} record.`
+          : catalog.reason,
+        expectedMint: config.mainnetMint,
+      };
+    }
+    if (record.mint !== config.mainnetMint) {
+      return {
+        symbol,
+        name: record.name,
+        status: "unavailable",
+        reason: `The official ${symbol} record mint did not match the approved mainnet mint.`,
+        expectedMint: config.mainnetMint,
+        observedMint: record.mint,
+      };
+    }
+    return { ...attachDemoMarket(record), status: "available" };
+  });
+  const products = marketOptions.filter((market) => market.status === "available");
+  if (catalog.status !== "available") return { ...catalog, products, marketOptions };
+  if (!products.length) return { ...unavailable(PRESTOCKS_API, "The official API did not return a supported KALSHI, OPENAI, or SPACEX record", catalog.observedAt), products, marketOptions };
+  const result = { ...catalog, products, marketOptions };
   if (fetchImpl === fetch) supportedCatalogCache = { cachedAt: Date.now(), value: result };
   return result;
 }

@@ -1,6 +1,4 @@
 import { Buffer } from "buffer/";
-import { quoteFormCopy, resolveMarketSelection } from "../src/market/chooser.mjs";
-import { evaluateQuoteLimit } from "../src/quote/limit.mjs";
 import {
   canSignDevnet,
   classifyDevnetProviderError,
@@ -62,7 +60,7 @@ const {
   getAssociatedTokenAddressSync,
 } = await import("@solana/spl-token");
 
-const KALSHI_SYMBOL = "KALSHI";
+const DEFAULT_MARKET_SYMBOL = "KALSHI";
 const DEVNET_RPC = "https://api.devnet.solana.com";
 const DEVNET_TRANSACTION_COMMITMENT = "confirmed";
 const AUCTION_STATES = ["Open", "Closed · claims available", "Halted · refunds available", "Aborted · refunds available"];
@@ -84,8 +82,6 @@ const isRoomPage = isDemoPage || document.body.dataset.page === "auction-room";
 const state = {
   market: null,
   selectedMarket: null,
-  quote: null,
-  limitResult: null,
   proof: null,
   devnet: null,
   liveRoom: null,
@@ -133,11 +129,6 @@ function isoTime(value) {
 function formatDollars(value) {
   if (typeof value !== "number" || !Number.isFinite(value)) return "unavailable";
   return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 2 }).format(value);
-}
-
-function formatCount(value) {
-  if (typeof value !== "number" || !Number.isFinite(value)) return "unavailable";
-  return new Intl.NumberFormat("en-US", { maximumFractionDigits: 4 }).format(value);
 }
 
 function formatRawTokenAmount(raw, decimals) {
@@ -336,143 +327,120 @@ function clearAuctionSetup() {
   sessionStorage.removeItem(creatorSetupKey());
 }
 
+function marketOptions() {
+  if (Array.isArray(state.market?.marketOptions)) return state.market.marketOptions;
+  return (state.market?.products ?? []).map((product) => ({ ...product, status: "available" }));
+}
+
+function renderMarketCards() {
+  const container = $("market-cards");
+  if (!container) return;
+  container.replaceChildren();
+  const options = marketOptions();
+  if (!options.length) {
+    const message = document.createElement("p");
+    message.className = "empty-state";
+    message.textContent = "No supported market records are available right now.";
+    container.append(message);
+    return;
+  }
+  for (const option of options) {
+    const card = document.createElement("button");
+    card.type = "button";
+    const selected = state.selectedMarket?.symbol === option.symbol;
+    card.className = `market-card${selected ? " is-selected" : ""}`;
+    card.dataset.symbol = option.symbol;
+    card.disabled = option.status !== "available";
+    card.setAttribute("aria-label", `${option.name} ${option.symbol}${selected ? " selected" : ""}`);
+    const top = document.createElement("span");
+    top.className = "market-card-top";
+    const name = document.createElement("strong");
+    name.textContent = option.name;
+    const symbol = document.createElement("span");
+    symbol.className = "ticker-badge";
+    symbol.textContent = option.symbol;
+    top.append(name, symbol);
+    const status = document.createElement("span");
+    status.className = "market-card-status";
+    status.textContent = option.status !== "available" ? "Unavailable" : selected ? "Selected market" : "Verified market window";
+    const mint = document.createElement("code");
+    mint.textContent = option.status === "available"
+      ? `Devnet test mint: ${option.demo.base.name}`
+      : option.reason ?? "The official record could not be verified.";
+    card.append(top, status, mint);
+    container.append(card);
+  }
+}
+
 function renderMarketRecord() {
   const record = state.selectedMarket;
   if (!record) return;
   $("market-name").textContent = record.name;
-  $("market-description").textContent = record.description ?? "Official issuer data for the verified PreStocks record.";
+  $("market-description").textContent = record.description ?? "Official issuer data verified against the current PreStocks API.";
   $("market-symbol").textContent = record.symbol;
-  $("mark-price").textContent = formatDollars(record.markPrice);
-  $("token-price").textContent = formatDollars(record.tokenPrice);
-  $("token-supply").textContent = formatCount(record.supply);
   $("selected-mint").textContent = record.mint;
   $("market-time").textContent = isoTime(state.market.observedAt);
   $("market-time").dateTime = state.market.observedAt ?? "";
   $("market-issuer-link").href = record.issuerUrl;
-  $("market-disclosure-link").href = record.issuerUrl;
-  $("quote-limit-issuer-link").href = record.issuerUrl;
+  $("market-issuer-link").textContent = "View official page ↗";
   if ($("demo-test-base")) $("demo-test-base").textContent = `${record.demo.base.name} · ${record.demo.base.address}`;
   if ($("demo-test-quote")) $("demo-test-quote").textContent = `${record.demo.quote.name} · ${record.demo.quote.address}`;
-  if ($("market-url-link")) $("market-url-link").href = `/demo/?market=${encodeURIComponent(record.symbol)}`;
   if ($("room-base-label")) $("room-base-label").textContent = record.demo.base.name;
   if ($("room-quote-label")) $("room-quote-label").textContent = record.demo.quote.name;
-  updateQuoteSizeControl();
-  updateQuoteFormAvailability();
+  renderMarketCards();
+}
+
+function resetMarketHeader() {
+  $("market-symbol").textContent = "—";
+  $("selected-mint").textContent = "unavailable";
+  $("market-time").textContent = isoTime(state.market?.observedAt);
+  $("market-time").removeAttribute("datetime");
+  $("market-issuer-link").removeAttribute("href");
+  $("market-issuer-link").textContent = "unavailable";
+  if ($("demo-test-base")) $("demo-test-base").textContent = "unavailable";
+  if ($("demo-test-quote")) $("demo-test-quote").textContent = "unavailable";
+  if ($("room-base-label")) $("room-base-label").textContent = "Selected test shares";
+  if ($("room-quote-label")) $("room-quote-label").textContent = "DEMO-USD";
 }
 
 function setMarketUnavailable(message) {
   state.selectedMarket = null;
-  state.quote = null;
   $("market-name").textContent = "PreStocks records unavailable";
   $("market-description").textContent = "The official product list could not be verified.";
-  $("market-symbol").textContent = "unavailable";
-  $("mark-price").textContent = "unavailable";
-  $("token-price").textContent = "unavailable";
-  $("token-supply").textContent = "unavailable";
-  $("selected-mint").textContent = "unavailable";
-  $("market-time").textContent = isoTime(state.market?.observedAt);
-  $("market-issuer-link").removeAttribute("href");
-  $("market-disclosure-link").removeAttribute("href");
-  $("quote-limit-issuer-link").removeAttribute("href");
-  if ($("demo-test-base")) $("demo-test-base").textContent = "unavailable";
-  if ($("demo-test-quote")) $("demo-test-quote").textContent = "unavailable";
-  if ($("market-url-link")) $("market-url-link").removeAttribute("href");
-  if ($("room-base-label")) $("room-base-label").textContent = "Selected test shares";
-  if ($("room-quote-label")) $("room-quote-label").textContent = "DEMO-USD";
-  $("market-selection-note").textContent = "Verified products are unavailable until the official PreStocks record can be loaded.";
-  updateQuoteFormAvailability();
-  resetLimitResult();
-  renderQuote();
+  resetMarketHeader();
+  $("market-selection-note").textContent = "The supported market cards are disabled until official records can be verified.";
+  renderMarketCards();
   setError($("market-error"), message);
 }
 
 function setMarketSelectionUnavailable(message) {
   state.selectedMarket = null;
-  state.quote = null;
-  $("market-name").textContent = "No verified product selected";
+  $("market-name").textContent = "No verified market selected";
   $("market-description").textContent = message;
-  $("market-symbol").textContent = "—";
-  $("mark-price").textContent = "unavailable";
-  $("token-price").textContent = "unavailable";
-  $("token-supply").textContent = "unavailable";
-  $("selected-mint").textContent = "unavailable";
-  $("market-time").textContent = isoTime(state.market?.observedAt);
-  $("market-issuer-link").removeAttribute("href");
-  $("market-disclosure-link").removeAttribute("href");
-  $("quote-limit-issuer-link").removeAttribute("href");
-  if ($("demo-test-base")) $("demo-test-base").textContent = "unavailable";
-  if ($("demo-test-quote")) $("demo-test-quote").textContent = "unavailable";
-  if ($("market-url-link")) $("market-url-link").removeAttribute("href");
-  if ($("room-base-label")) $("room-base-label").textContent = "Selected test shares";
-  if ($("room-quote-label")) $("room-quote-label").textContent = "DEMO-USD";
+  resetMarketHeader();
   $("market-selection-note").textContent = message;
-  updateQuoteFormAvailability();
-  resetLimitResult();
-  renderQuote();
-}
-
-function updateQuoteFormAvailability() {
-  const button = $("check-quote");
-  if (button) button.disabled = !state.selectedMarket;
-}
-
-function filterMarketOptions() {
-  const selector = $("market-selector");
-  const search = $("market-search").value;
-  const products = state.market?.products ?? [];
-  const selection = resolveMarketSelection(products, {
-    search,
-    selectedSymbol: sharedMarketSymbol()
-      ?? state.selectedMarket?.symbol
-      ?? (products.some((product) => product.symbol === KALSHI_SYMBOL) ? KALSHI_SYMBOL : null),
-  });
-  selector.replaceChildren();
-  if (selection.noResults) {
-    const option = document.createElement("option");
-    option.textContent = "No verified products match this search";
-    option.value = "";
-    option.disabled = true;
-    option.selected = true;
-    selector.append(option);
-    selector.disabled = true;
-    setMarketSelectionUnavailable(`No verified PreStocks products match “${search.trim()}”.`);
-    return;
-  }
-  selector.disabled = false;
-  for (const product of selection.matches) {
-    const option = document.createElement("option");
-    option.value = product.symbol;
-    option.textContent = `${product.symbol} · ${product.name}`;
-    selector.append(option);
-  }
-  selector.value = selection.selectedSymbol;
-  $("market-selection-note").textContent = search.trim()
-    ? `${selection.matches.length} verified product${selection.matches.length === 1 ? "" : "s"} match this search.`
-    : "Choose up to three supported official records. This list is not a liquidity ranking.";
-  if (state.selectedMarket?.symbol !== selection.selectedSymbol) selectMarket(selection.selectedSymbol);
+  renderMarketCards();
+  setError($("market-error"), message);
 }
 
 function selectMarket(symbol) {
   const record = state.market?.products?.find((product) => product.symbol === symbol);
   if (!record) {
-    setMarketSelectionUnavailable("Choose a verified PreStocks product to request a quote.");
+    setMarketSelectionUnavailable("Choose one of the enabled cards. An unavailable card cannot be selected until its official record and exact mint match.");
     return;
   }
   state.selectedMarket = record;
   setVerifiedDevnetState(null, record);
-  $("market-selector").value = record.symbol;
-  state.quote = null;
-  resetLimitResult();
   state.auction = null;
   state.distributor = null;
   state.setup = readAuctionSetup();
   clearError($("market-error"));
+  $("market-selection-note").textContent = `${record.symbol} is verified. Its named Devnet test mint and auction are separate from the official mainnet record.`;
   renderMarketRecord();
-  renderQuote();
   if (isDemoPage) {
     const query = new URLSearchParams(window.location.search);
     const queryMarket = query.get("market");
-    if (queryMarket !== record.symbol) {
+    if (queryMarket !== record.symbol || legacyAuctionAddress()) {
       history.replaceState(null, "", `/demo/?market=${encodeURIComponent(record.symbol)}`);
     }
     loadAuction();
@@ -490,186 +458,20 @@ async function loadMarket() {
       setMarketUnavailable(market.reason ?? "The official PreStocks records could not be loaded.");
       return;
     }
-    filterMarketOptions();
+    const products = market.products ?? [];
+    renderMarketCards();
+    const requested = sharedMarketSymbol();
+    const selected = products.find((product) => product.symbol === requested)
+      ?? products.find((product) => product.symbol === DEFAULT_MARKET_SYMBOL)
+      ?? products[0];
+    if (selected) selectMarket(selected.symbol);
+    else setMarketSelectionUnavailable("No supported market has a verified official record right now.");
   } catch (errorValue) {
     state.market = { observedAt: new Date().toISOString() };
     setMarketUnavailable(errorValue instanceof Error ? errorValue.message : "Market request failed.");
   }
 }
 
-function quoteAgeSeconds() {
-  if (!state.quote?.observedAt) return null;
-  const timestamp = Date.parse(state.quote.observedAt);
-  if (!Number.isFinite(timestamp)) return null;
-  return Math.max(0, Math.floor((Date.now() - timestamp) / 1000));
-}
-
-function renderQuote() {
-  const container = $("quote-result");
-  container.replaceChildren();
-  const quote = state.quote;
-  if (!quote) {
-    const message = document.createElement("p");
-    message.className = "empty-state";
-    message.textContent = "Choose a direction and size to request a live read-only quote.";
-    container.append(message);
-    renderLimitResult();
-    return;
-  }
-  if (quote.status !== "available") {
-    const heading = document.createElement("p");
-    heading.className = "quote-summary";
-    heading.textContent = "Quote unavailable";
-    const reason = document.createElement("p");
-    reason.className = "empty-state";
-    reason.textContent = quote.reason ?? "A route quote could not be obtained.";
-    container.append(heading, reason, quoteDetails([
-      ["Direction", quote.direction === "buy" ? `Buy ${quote.symbol ?? "selected token"} with USDC` : quote.direction === "sell" ? `Sell ${quote.symbol ?? "selected token"} for USDC` : "unavailable"],
-      [quote.direction === "sell" ? "Amount to sell" : "Amount to spend", `${quote.inputAmount || "unavailable"} ${quote.inputMint ? mintName(quote.inputMint) : ""}`.trim()],
-      ["Exact mint", quote.mint ?? "unavailable"],
-      ["Failure type", quote.failureType ?? "unavailable"],
-      ["Observed", isoTime(quote.observedAt)],
-      ["Age", `${quoteAgeSeconds() ?? 0} seconds`],
-      ["Source", quote.source ?? "Jupiter Swap API v2"],
-    ]));
-    renderLimitResult();
-    return;
-  }
-  const inputToken = mintName(quote.inputMint);
-  const outputToken = mintName(quote.outputMint);
-  const heading = document.createElement("p");
-  heading.className = "quote-summary";
-  heading.textContent = `${quote.inputAmount} ${inputToken} → ${quote.outputAmount} ${outputToken}`;
-  const feeRate = quote.fees?.totalFeeBps === null || quote.fees?.totalFeeBps === undefined
-    ? "not reported"
-    : `${quote.fees.totalFeeBps} bps (${(quote.fees.totalFeeBps / 100).toFixed(2)}%)`;
-  const feeMint = quote.fees?.feeMint ? mintName(quote.fees.feeMint) : "not reported";
-  const platformFeeDecimals = quote.fees?.platformFeeMint === quote.inputMint
-    ? quote.inputDecimals
-    : quote.fees?.platformFeeMint === quote.outputMint ? quote.outputDecimals : null;
-  const platformFeeAmount = quote.fees?.platformFeeAmountRaw
-    ? formatRawTokenAmount(quote.fees.platformFeeAmountRaw, platformFeeDecimals)
-    : null;
-  const platformFee = platformFeeAmount
-    ? `${platformFeeAmount} ${mintName(quote.fees.platformFeeMint)}`
-    : "not reported";
-  const details = quoteDetails([
-    ["Direction", quote.direction === "buy" ? `USDC into exact ${quote.symbol} mint` : `Exact ${quote.symbol} mint into USDC`],
-    [quote.direction === "buy" ? "Amount to spend" : "Amount to sell", `${quote.inputAmount} ${inputToken}`],
-    ["Estimated output", `${quote.outputAmount} ${outputToken}`],
-    ["Effective price per token", `${formatDollars(quote.effectivePriceUsdPerToken)} per ${quote.symbol}`],
-    ["Exact mint", quote.mint ?? "unavailable"],
-    ["Route", quote.route ?? "not reported"],
-    ["Total fee rate", feeRate],
-    ["Fee mint", feeMint],
-    ["Reported platform fee rate", quote.fees?.platformFeeBps === null || quote.fees?.platformFeeBps === undefined
-      ? "not reported"
-      : `${quote.fees.platformFeeBps} bps (${(quote.fees.platformFeeBps / 100).toFixed(2)}%)`],
-    ["Platform fee amount", platformFee],
-    ["Platform fee mint", quote.fees?.platformFeeMint ? mintName(quote.fees.platformFeeMint) : "not reported"],
-    ["Observed", isoTime(quote.observedAt)],
-    ["Age", `${quoteAgeSeconds() ?? 0} seconds`],
-    ["Source", `${quote.source} · no taker`],
-  ]);
-  container.append(heading, details);
-  renderLimitResult();
-}
-
-function resetLimitResult() {
-  state.limitResult = null;
-  renderLimitResult();
-}
-
-function renderLimitResult() {
-  const container = $("quote-limit-result");
-  if (!container) return;
-  container.replaceChildren();
-  const result = state.limitResult;
-  if (!result) {
-    const message = document.createElement("p");
-    message.className = "empty-state";
-    message.textContent = "Optional: set a per-token limit if you want a comparison.";
-    container.append(message);
-    return;
-  }
-  const message = document.createElement("p");
-  message.className = result.status === "determined" ? "limit-result-message" : "empty-state";
-  message.textContent = result.status === "determined"
-    ? result.message
-    : result.reason === "limit"
-      ? "Enter a positive per-token limit to check it."
-      : result.reason === "limit-not-set"
-        ? "No per-token limit set. The quote remains indicative."
-      : "No limit determination: this quote is unavailable or stale.";
-  container.append(message);
-}
-
-function checkQuoteLimit() {
-  state.limitResult = evaluateQuoteLimit({
-    quote: state.quote,
-    side: $("quote-direction").value,
-    limit: $("quote-limit").value,
-  });
-  renderLimitResult();
-}
-
-function quoteDetails(rows) {
-  const list = document.createElement("dl");
-  list.className = "quote-details";
-  for (const [label, value] of rows) {
-    const row = document.createElement("div");
-    const term = document.createElement("dt");
-    const detail = document.createElement("dd");
-    term.textContent = label;
-    detail.textContent = value;
-    row.append(term, detail);
-    list.append(row);
-  }
-  return list;
-}
-
-function updateQuoteSizeControl() {
-  const selling = $("quote-direction").value === "sell";
-  const symbol = state.selectedMarket?.symbol ?? "selected token";
-  const copy = quoteFormCopy($("quote-direction").value, symbol);
-  $("quote-amount-label").textContent = copy.amountLabel;
-  $("quote-unit").textContent = copy.unit;
-  $("quote-amount").step = selling ? "0.000000001" : "0.01";
-  $("quote-amount").min = selling ? "0.000000001" : "0.01";
-  $("quote-amount").value = selling ? "1" : "100";
-  $("quote-limit-label").textContent = copy.limitLabel;
-  $("quote-limit-help").textContent = copy.limitHelp;
-}
-
-async function checkQuote(event) {
-  event.preventDefault();
-  const side = $("quote-direction").value;
-  const amount = $("quote-amount").value;
-  const market = state.selectedMarket;
-  const button = $("check-quote");
-  button.disabled = true;
-  button.textContent = "Requesting quote…";
-  $("quote-result").textContent = "Requesting a no-taker quote for the selected verified mint…";
-  try {
-    if (!market) throw new Error("Select a verified PreStocks product first.");
-    const query = new URLSearchParams({ symbol: market.symbol, mint: market.mint, side, amount });
-    const response = await fetch(`/api/quote?${query}`, { cache: "no-store" });
-    state.quote = await response.json();
-    renderQuote();
-    checkQuoteLimit();
-  } catch (errorValue) {
-    state.quote = {
-      status: "unavailable",
-      observedAt: new Date().toISOString(),
-      reason: errorValue instanceof Error ? errorValue.message : "Quote request failed",
-    };
-    renderQuote();
-    checkQuoteLimit();
-  } finally {
-    button.disabled = !state.selectedMarket;
-    button.textContent = "Check exact-mint quote";
-  }
-}
 
 function decodeAuction(data) {
   const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
@@ -2536,13 +2338,10 @@ const on = (id, event, handler) => {
 };
 
 if (isDemoPage) {
-  on("market-search", "input", filterMarketOptions);
-  on("market-selector", "change", (event) => selectMarket(event.target.value));
-  on("quote-direction", "change", updateQuoteSizeControl);
-  on("quote-direction", "change", resetLimitResult);
-  on("quote-amount", "input", resetLimitResult);
-  on("quote-limit", "input", resetLimitResult);
-  on("quote-form", "submit", checkQuote);
+  on("market-cards", "click", (event) => {
+    const card = event.target.closest("button[data-symbol]");
+    if (card && !card.disabled) selectMarket(card.dataset.symbol);
+  });
   on("copy-mint", "click", copyMint);
 }
 on("connect-wallet", "click", openWalletChooser);
@@ -2587,7 +2386,6 @@ window.addEventListener("focus", loadAuction);
 
 if (isDemoPage) {
   loadMarket();
-  updateQuoteSizeControl();
 } else {
   loadAuction();
 }
@@ -2597,8 +2395,6 @@ renderAuctionSetup();
 updateCreateCutoffPreview();
 updateEscrowEstimate();
 setInterval(() => {
-  if (state.quote) renderQuote();
-  if (state.limitResult) checkQuoteLimit();
   if (state.auction) renderAuction();
   else renderRoomCountdown();
 }, 1_000);

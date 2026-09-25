@@ -1,6 +1,6 @@
 # CallWindow
 
-CallWindow is a market-specific scheduled-auction demo. The Demo reads current official PreStocks records and no-taker Jupiter quotes as a read-only mainnet reference. It settles only named CallWindow test assets on Solana devnet. It never auctions a PreStocks mint or submits a mainnet transaction.
+CallWindow is a market-specific scheduled-auction demo. The Demo reads current official PreStocks records as a read-only mainnet reference, then settles only named CallWindow test assets on Solana devnet. It never auctions a PreStocks mint or submits a mainnet transaction. The server also retains an optional no-taker Jupiter quote API for independent checks, outside the Demo flow.
 
 The current official API can expose up to three supported products. The server verifies the official symbol and exact mainnet mint, then maps it to the matching Devnet test mint and shared `DEMO-USD` quote mint:
 
@@ -38,7 +38,7 @@ npm run server
 npm run dev
 ```
 
-Open the Vite address printed by `npm run dev`. The PreStocks record and Jupiter quote refresh independently. The quote is pinned to the approved mint and requires a successful on-chain decimal lookup and a live no-taker route. If either check fails, the quote panel reports it as unavailable with the reason.
+Open the Vite address printed by `npm run dev`. The Demo first verifies the selected official PreStocks record and exact mainnet mint, then loads that product's isolated Devnet test window. If the official record or its matching test window is unavailable, the Demo says so and keeps the auction controls unavailable.
 
 ## Provision market windows
 
@@ -81,4 +81,4 @@ The devnet preflight calculates the authority target from the built program size
 
 On a fresh checkout, `build:program` creates the ignored program keypair and synchronizes the Rust and Anchor program IDs before compiling. The runner checks that all three IDs still match before it contacts devnet.
 
-Devnet transactions use only DEMO-EQUITY and DEMO-USD. They do not involve the KALSHI mint. A route quote is indicative and does not establish fillability, eligibility, execution, or auction benefit.
+Devnet transactions use only the selected CallWindow test base mint and shared DEMO-USD. They do not involve a PreStocks mint. The optional route quote API is indicative and does not establish fillability, eligibility, execution, or auction benefit.

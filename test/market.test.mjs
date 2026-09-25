@@ -89,6 +89,23 @@ test("supported demo catalog includes only official products with an allowlisted
   assert.equal(verified.record.demo.base.address, "5enTWRqREUhrMrnbiobBxpBWkyd5CfLtaMHgfBb876Ar");
 });
 
+test("market options expose unavailable reasons without selecting an unverified product", async () => {
+  const records = [
+    { ...kalshiRecord, contract_address: "PresTj4Yc2bAR197Er7wz4UUKSfqt6FryBEdAriBoQB" },
+    { ...kalshiRecord, symbol: "OPENAI", name: "OpenAI PreStocks", contract_address: "PreweJYECqtQwBtpxHL171nL2K6umo692gTm7Q3rpgF", external_url: "https://prestocks.com/openai" },
+  ];
+  const catalog = await getSupportedDemoCatalog(fakeMarketFetch({ record: records }).fetchImpl);
+  const kalshi = catalog.marketOptions.find((option) => option.symbol === "KALSHI");
+  const openai = catalog.marketOptions.find((option) => option.symbol === "OPENAI");
+  const spacex = catalog.marketOptions.find((option) => option.symbol === "SPACEX");
+  assert.equal(kalshi.status, "unavailable");
+  assert.match(kalshi.reason, /did not match/);
+  assert.equal(openai.status, "available");
+  assert.equal(spacex.status, "unavailable");
+  assert.match(spacex.reason, /did not return a SPACEX/);
+  assert.deepEqual(catalog.products.map((product) => product.symbol), ["OPENAI"]);
+});
+
 test("selected symbol and mint must match the current official record", async () => {
   const { fetchImpl, requests } = fakeMarketFetch();
   const result = await getPreStocksQuote({

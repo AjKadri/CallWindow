@@ -59,11 +59,11 @@
         <div class="page-heading">
           <p class="section-kicker">Assets and scope</p>
           <h2>The demo tokens are deliberately generic.</h2>
-          <p>Each supported product has its own unmistakably named CallWindow Devnet test base mint and the shared DEMO-USD quote mint. These tokens have no equity backing, issuer rights, or monetary value, and they have no connection to KALSHI, OPENAI, SPACEX, or any other PreStocks product. The Demo chooser reads current official records and requests no-taker mainnet quotes for the selected exact mint. Those observations remain read-only and never become auction assets.</p>
+          <p>Each supported product has its own unmistakably named CallWindow Devnet test base mint and the shared DEMO-USD quote mint. These tokens have no equity backing, issuer rights, or monetary value, and they have no connection to KALSHI, OPENAI, SPACEX, or any other PreStocks product. The Demo reads the selected official record as a mainnet reference, then runs a separate Devnet test auction. The official mint never becomes an auction asset.</p>
         </div>
         <div class="docs-scope-grid">
           <div><span>Market test assets</span><code>CW-KALSHI-TEST · CW-OPENAI-TEST · CW-SPACEX-TEST</code></div>
-          <div><span>Demo quote asset</span><code>7gLQ8vdtYTxbHa4YK9gjjsVe49WiKeH6pi2pV8us8zd4</code></div>
+          <div><span>Auction quote test asset</span><code>7gLQ8vdtYTxbHa4YK9gjjsVe49WiKeH6pi2pV8us8zd4</code></div>
           <div><span>Historical proof pair</span><code>B6ZoEr92PB58bN1MgTXwjZHBUxCZ895ERVdhFJtSQFcP · 7gLQ8vdtYTxbHa4YK9gjjsVe49WiKeH6pi2pV8us8zd4</code></div>
         </div>
       </section>
@@ -83,7 +83,7 @@
       </section>
 
       <section class="docs-section docs-cta">
-        <div><p class="section-kicker">Next step</p><h2>See the selected market and its window together.</h2><p>The Demo keeps official PreStocks reference data and no-taker quote checks read-only, then runs the selected product's separate Devnet test-asset flow below it.</p></div>
+        <div><p class="section-kicker">Next step</p><h2>See the selected market and its window together.</h2><p>The Demo keeps the selected official PreStocks record read-only, then runs that product's separate Devnet test-asset flow below it.</p></div>
         <a class="button primary" href="/demo/">Open the market Demo <span aria-hidden="true">↗</span></a>
       </section>
 
