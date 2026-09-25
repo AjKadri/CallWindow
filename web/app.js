@@ -259,6 +259,19 @@ function sharedAuctionAddress() {
   }
 }
 
+function renderRoomHero() {
+  if (!isRoomPage) return;
+  const shared = Boolean(sharedAuctionAddress());
+  const title = $("room-hero-title");
+  const copy = $("room-hero-copy");
+  if (title) title.textContent = shared ? "Join this funded Devnet window." : "Create a funded Devnet window.";
+  if (copy) {
+    copy.textContent = shared
+      ? "This link opens one verified CallWindow auction account. Connect a wallet, check your demo balances, submit a funded limit order before the cutoff, and follow the result through close, claim, or refund."
+      : "Choose an opening order, fund it with DEMO test assets, and share the room after it finalizes. Other wallets can join before the cutoff, then follow the result through close, claim, or refund.";
+  }
+}
+
 function readAuctionSetup() {
   try {
     const setup = JSON.parse(sessionStorage.getItem(CREATE_SETUP_KEY) ?? "null");
@@ -1112,7 +1125,7 @@ function renderAuction() {
   const cutoff = new Date(Number(auction.cutoffTime) * 1000).toISOString().replace("T", " ").replace("Z", " UTC");
   $("auction-status").textContent = status;
   $("auction-summary").textContent = (state.sharedAuction ? "Shared creator window · " : "Operator test room · ")
-    + "Cutoff " + cutoff + " · " + auction.orderCount + " of 32 orders · prices in one-cent ticks.";
+    + "Cutoff " + cutoff + " · " + auction.orderCount + " of 32 orders. Orders can change until cutoff.";
   $("candidate-range").textContent = `${formatDollars(auction.firstTickCents / 100)}–${formatDollars(lastTick / 100)}`;
   $("opening-reference").textContent = formatDollars(auction.openingReferenceCents / 100);
   const provisional = auction.state === 0;
@@ -1123,11 +1136,11 @@ function renderAuction() {
   if ($("clearing-price-label")) $("clearing-price-label").textContent = provisional ? "Provisional clear" : "Final clearing price";
   if ($("matched-quantity-label")) $("matched-quantity-label").textContent = provisional ? "Provisional match" : "Final matched quantity";
   if ($("provisional-clearing-label")) $("provisional-clearing-label").textContent = provisional ? "Provisional clear" : "Final clear";
-  if ($("provisional-clearing-note")) $("provisional-clearing-note").textContent = provisional ? "program tie breaks" : "on-chain close";
+  if ($("provisional-clearing-note")) $("provisional-clearing-note").textContent = provisional ? "can change before cutoff" : "final on-chain close";
   if ($("provisional-matched-label")) $("provisional-matched-label").textContent = provisional ? "Provisional match" : "Final matched";
   if ($("provisional-matched-note")) $("provisional-matched-note").textContent = provisional ? "before cutoff" : "on-chain close";
   if ($("remaining-imbalance-label")) $("remaining-imbalance-label").textContent = provisional ? "Remaining imbalance" : "Final imbalance";
-  if ($("remaining-imbalance-note")) $("remaining-imbalance-note").textContent = provisional ? "eligible shares" : "after close";
+  if ($("remaining-imbalance-note")) $("remaining-imbalance-note").textContent = provisional ? "not currently matched" : "after close";
   if ($("funded-buy-interest")) $("funded-buy-interest").textContent = formatShares(state.preview.fundedBuyBase);
   if ($("funded-sell-interest")) $("funded-sell-interest").textContent = formatShares(state.preview.fundedSellBase);
   if ($("provisional-clearing")) $("provisional-clearing").textContent = state.preview.priceCents > 0 ? formatDollars(state.preview.priceCents / 100) : "No cross";
@@ -1147,7 +1160,7 @@ function renderAuction() {
   $("close-auction").hidden = !canClose;
   $("abort-auction").hidden = !canAbort;
   $("action-note").textContent = canClose
-    ? "Anyone with a devnet wallet can close after the cutoff."
+    ? "After the cutoff, any Devnet wallet can close the window. Owners then claim the matched result or a refund."
     : canAbort ? "Anyone can abort after 30 minutes if no claim has started." : "";
   if ($("room-next-action")) {
     $("room-next-action").textContent = windowOpen
@@ -1156,9 +1169,9 @@ function renderAuction() {
   }
   if ($("room-state-note")) {
     $("room-state-note").textContent = windowOpen
-      ? "Orders are funded before the cutoff. A close is permissionless after it."
-      : auction.state === 1 ? "The close is finalized. Claim only an order owned by your wallet."
-        : auction.state === 0 ? "The cutoff has passed. Close the window, then claim."
+      ? "Orders can be added or cancelled before the cutoff. After it, close the window and wait for finalization."
+      : auction.state === 1 ? "The close is finalized. Claim a matched result or refund for an order owned by your wallet."
+        : auction.state === 0 ? "The cutoff has passed. Close the window, then claim or refund your order."
           : "The program state exposes refund actions where applicable.";
   }
   const orderButton = $("submit-order");
@@ -1715,7 +1728,7 @@ function updateCreateCutoffPreview() {
   const preview = $("create-cutoff-preview");
   if (!input || !preview) return;
   try {
-    preview.textContent = `Expected local close: ${expectedLocalCloseLabel(input.value)}. The timer starts during creation, and the opening order must finalize before it expires.`;
+    preview.textContent = `Expected local close: ${expectedLocalCloseLabel(input.value)}. This timer starts when the auction account is created. The opening order must finalize before it reaches zero.`;
   } catch (errorValue) {
     preview.textContent = errorValue instanceof Error ? errorValue.message : "Enter an order-window duration in minutes.";
   }
@@ -2239,6 +2252,7 @@ async function finishOpeningOrder() {
     state.creatorStage = "finalization";
     const url = new URL(sharedRoomUrl(window.location.origin, setup.auctionAddress));
     history.replaceState(null, "", url.pathname + url.search);
+    renderRoomHero();
     state.sharedAuction = true;
     await loadSharedAuction(setup.auctionAddress);
     status.textContent = "Opening order finalized. The shared window is ready.";
@@ -2410,6 +2424,7 @@ if (!isRoomPage) {
   loadMarket();
   updateQuoteSizeControl();
 }
+renderRoomHero();
 renderWalletChoices();
 loadAuction();
 renderAuctionSetup();

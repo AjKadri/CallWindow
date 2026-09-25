@@ -577,6 +577,12 @@ body {
 .room-create-grid > *, .room-grid > * { min-width: 0; }
 .room-create-grid .panel { min-height: 100%; }
 .create-rules-panel { background: linear-gradient(145deg, #f8fffd, #f1f8fb); }
+.room-steps { display: grid; gap: 1px; margin: 0 0 21px; padding: 0; border-top: 1px solid var(--line); list-style: none; }
+.room-step { display: grid; grid-template-columns: 25px minmax(0, 1fr); gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--line); }
+.room-step:last-child { border-bottom: 0; }
+.room-step-number { color: #8a9791; font: 500 10px/1.5 "DM Mono", monospace; }
+.room-step strong { display: block; color: #40564d; font-size: 11px; line-height: 1.35; }
+.room-step p { margin: 3px 0 0; color: #6f7c78; font-size: 10px; line-height: 1.45; }
 .create-share-url { display: block; margin-top: 10px; color: #59726b; font: 10px/1.45 "DM Mono", monospace; overflow-wrap: anywhere; }
 .room-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(315px, .68fr); gap: 22px; align-items: start; }
 .room-section .panel { border-radius: 28px; box-shadow: 0 18px 46px rgba(47,99,92,.08); }
