@@ -47,6 +47,7 @@ const {
   SYSVAR_RENT_PUBKEY,
   Transaction,
   TransactionInstruction,
+  VersionedTransaction,
   LAMPORTS_PER_SOL,
 } = await import("@solana/web3.js");
 const {
@@ -1391,9 +1392,12 @@ async function submitAndFinalize(instructions, label, { button = null, reload = 
           progress("simulation", "Checking the transaction against Solana Devnet…", "Checking Devnet simulation…");
           return transaction;
         },
-        simulate: (builtTransaction) => connection.simulateTransaction(builtTransaction, {
-          commitment: DEVNET_TRANSACTION_COMMITMENT,
-        }),
+        simulate: (builtTransaction) => {
+          const simulationTransaction = new VersionedTransaction(builtTransaction.compileMessage());
+          return connection.simulateTransaction(simulationTransaction, {
+            commitment: DEVNET_TRANSACTION_COMMITMENT,
+          });
+        },
         send: async (builtTransaction) => {
           try {
             progress("signing", `Review and sign in ${state.walletName ?? "your wallet"}. This transaction is Devnet-only.`, `Review in ${state.walletName ?? "wallet"}…`);
